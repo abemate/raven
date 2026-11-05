@@ -328,6 +328,17 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetSystemTimeAsFileTime", 1, [](ApiCall &call) { call.store<uint64_t>(call[0], now_ticks()); });
 	registry.add("GetSystemTimePreciseAsFileTime", 1, [](ApiCall &call) { call.store<uint64_t>(call[0], now_ticks()); });
 	registry.add("GetSystemTime", 1, [](ApiCall &call) { call.write(call[0], system_time(now_ticks())); });
+	// The clock is never adjusted: like a default Windows, it answers the 15.625 ms interrupt period as both the adjustment
+	// and the increment, with adjustment disabled.
+	registry.add("GetSystemTimeAdjustment", 3, [](ApiCall &call) {
+		constexpr uint32_t period = 156250;
+		for (int index = 0; index < 2; ++index)
+			if (call[index])
+				call.store<uint32_t>(call[index], period);
+		if (call[2])
+			call.store<uint32_t>(call[2], 1);
+		call.ret(1);
+	});
 	registry.add("GetLocalTime", 1, [](ApiCall &call) {
 		const uint64_t utc = now_ticks();
 		const auto zone = zone_at(time_t((utc - filetime_epoch_offset) / 10000000ULL));
