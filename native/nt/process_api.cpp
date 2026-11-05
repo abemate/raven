@@ -442,6 +442,32 @@ void register_process_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetSystemWindowsDirectoryA", 2, [=](ApiCall &call) { directory(call, false, windows); });
 	registry.add("GetSystemDirectoryW", 2, [=](ApiCall &call) { directory(call, true, system); });
 	registry.add("GetSystemDirectoryA", 2, [=](ApiCall &call) { directory(call, false, system); });
+	// mscms: the folder colour profiles are installed to, created in the prefix on first use so a program can list it. Only the local
+	// machine is served. The size is in bytes with the terminator; a buffer too small learns the size it needs.
+	const auto color_directory = [&context](ApiCall &call, bool wide) {
+		static const std::string folder = "C:\\Windows\\System32\\spool\\drivers\\color";
+		if (call[0] || !call[2]) {
+			call.fail(87);
+			return;
+		}
+		if (const auto resolved = context.paths.resolve(from_utf8(folder)); resolved && !resolved->exists) {
+			std::error_code error;
+			std::filesystem::create_directories(resolved->host, error);
+		}
+		const size_t needed = (folder.size() + 1) * (wide ? 2 : 1), capacity = call.load<uint32_t>(call[2]);
+		call.store<uint32_t>(call[2], uint32_t(needed));
+		if (!call[1] || capacity < needed) {
+			call.fail(122);
+			return;
+		}
+		if (wide)
+			call.put_wide(call[1], from_utf8(folder), capacity / 2);
+		else
+			call.put_narrow(call[1], folder, capacity);
+		call.ret(1);
+	};
+	registry.add("GetColorDirectoryW", 3, [=](ApiCall &call) { color_directory(call, true); });
+	registry.add("GetColorDirectoryA", 3, [=](ApiCall &call) { color_directory(call, false); });
 	// The 64-bit system Raven presents keeps its 32-bit libraries in SysWOW64, whichever width asks.
 	registry.add("GetSystemWow64DirectoryW", 2, [=](ApiCall &call) { directory(call, true, wow64); });
 	registry.add("GetSystemWow64DirectoryA", 2, [=](ApiCall &call) { directory(call, false, wow64); });
