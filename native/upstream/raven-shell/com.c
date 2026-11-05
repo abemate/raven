@@ -313,3 +313,18 @@ HRESULT WINAPI CoWaitForMultipleHandles(DWORD flags, DWORD timeout, ULONG count,
 	*index = result;
 	return S_OK;
 }
+
+/* Puts an embedded object into the running state. An object without IRunnableObject has no loaded state apart from running, so it
+ * already runs; any other is asked to run without a bind context. */
+HRESULT WINAPI OleRun(IUnknown *unknown)
+{
+	IRunnableObject *runnable;
+	HRESULT hr;
+	if (!unknown)
+		return E_INVALIDARG;
+	if (FAILED(IUnknown_QueryInterface(unknown, &IID_IRunnableObject, (void **)&runnable)))
+		return S_OK;
+	hr = IRunnableObject_Run(runnable, NULL);
+	IRunnableObject_Release(runnable);
+	return hr;
+}
