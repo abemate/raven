@@ -1300,6 +1300,30 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("SetDllDirectoryW", 1, [set_dll_directory](ApiCall &call) { set_dll_directory(call, true); });
 	registry.add("SetDllDirectoryA", 1, [set_dll_directory](ApiCall &call) { set_dll_directory(call, false); });
+	// The folder SetDllDirectory added, empty when there is none: the length without the terminator when it fits, else the size the
+	// buffer needs with it.
+	registry.add("GetDllDirectoryW", 2, [&context](ApiCall &call) {
+		const auto &folder = context.paths.dll_directory();
+		const std::u16string text = folder ? *folder : std::u16string();
+		const size_t capacity = call.u32(0);
+		if (capacity <= text.size()) {
+			call.ret(text.size() + 1);
+			return;
+		}
+		call.put_wide(call[1], text, capacity);
+		call.ret(text.size());
+	});
+	registry.add("GetDllDirectoryA", 2, [&context](ApiCall &call) {
+		const auto &folder = context.paths.dll_directory();
+		const std::string text = folder ? to_ansi(*folder, context.launch.ansi_code_page) : std::string();
+		const size_t capacity = call.u32(0);
+		if (capacity <= text.size()) {
+			call.ret(text.size() + 1);
+			return;
+		}
+		call.put_narrow(call[1], text, capacity);
+		call.ret(text.size());
+	});
 	// The interface a packet to an address would leave by: the first adapter that is up and is not the loopback one, else the loopback.
 	const auto best_interface = [](ApiCall &call) {
 		if (!call[1]) {
