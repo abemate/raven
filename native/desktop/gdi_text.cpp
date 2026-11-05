@@ -868,6 +868,68 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 				call.ret(uint32_t(text.size()));
 			});
 		});
+	// The fonts here are laid out one glyph per character, left to right, without kerning or shaping, so no font needs anything
+	// GetCharacterPlacement would do: the answer is no flags, and GCP_ERROR for a handle that is no device context.
+	registry.add("GetFontLanguageInfo", 1, [=, this](ApiCall &call) {
+		guarded(call, 0x8000, [&] {
+			selected_font(require_dc(call, 0));
+			call.ret(0);
+		});
+	});
+	// GetCharacterPlacement(dc, string, count, maximum extent, GCP_RESULTS, flags): the left-to-right layout every other text call here
+	// uses, one glyph per character in reading order, each with its advance and the caret position before it. The arrays are as long as
+	// the results' nGlyphs says; GCP_MAXEXTENT stops nMaxFit at the first character that would cross the maximum extent. The answer is
+	// the extent of the whole string, its width in the low word and its height in the high one.
+	for (const bool narrow : {false, true})
+		registry.add(narrow ? "GetCharacterPlacementA" : "GetCharacterPlacementW", 6, [=, this](ApiCall &call) {
+			guarded(call, 0, [&] {
+				auto &dc = require_dc(call, 0);
+				const auto &font = selected_font(dc);
+				const int32_t count = call.i32(2), max_extent = call.i32(3);
+				if (count < 0 || (count && !call[1]))
+					throw uint32_t(87);
+				const auto text = count ? widen(call, call[1], count, narrow) : std::u16string();
+				const auto cumulative = text.empty() ? std::vector<int32_t>() : measured_advances(font.definition, to_units(text));
+				const int32_t total = cumulative.empty() ? 0 : cumulative.back();
+				const int32_t height = objects.text().logical_metrics(font.definition).height;
+				if (const uint64_t results = call[4]) {
+					const size_t width = call.pointer_width(), first = width == 8 ? 8 : 4;
+					const auto pointer = [&](size_t index) {
+						return width == 8 ? call.load<uint64_t>(results + first + index * 8) : uint64_t(call.load<uint32_t>(results + first + index * 4));
+					};
+					const uint64_t out = pointer(0), order = pointer(1), dx = pointer(2), caret = pointer(3), glyphs = pointer(5);
+					const uint64_t glyph_count = results + first + 6 * width;
+					const size_t set = std::min<size_t>(text.size(), call.load<uint32_t>(glyph_count));
+					for (size_t index = 0; index < set; ++index) {
+						const int32_t before = index ? cumulative[index - 1] : 0;
+						if (out) {
+							if (narrow)
+								call.store<uint8_t>(out + index, call.load<uint8_t>(call[1] + index));
+							else
+								call.store<uint16_t>(out + index * 2, uint16_t(text[index]));
+						}
+						if (order)
+							call.store<uint32_t>(order + index * 4, uint32_t(index));
+						if (dx)
+							call.store<int32_t>(dx + index * 4, cumulative[index] - before);
+						if (caret)
+							call.store<int32_t>(caret + index * 4, before);
+						if (glyphs)
+							call.store<uint16_t>(glyphs + index * 2, uint16_t(text[index]));
+					}
+					int32_t fit = int32_t(set);
+					if (call.u32(5) & 0x100000U)
+						for (size_t index = 0; index < set; ++index)
+							if (cumulative[index] > max_extent) {
+								fit = int32_t(index);
+								break;
+							}
+					call.store<uint32_t>(glyph_count, uint32_t(set));
+					call.store<int32_t>(glyph_count + 4, fit);
+				}
+				call.ret((uint32_t(height) << 16) | (uint32_t(total) & 0xffff));
+			});
+		});
 	// GetCharABCWidthsI(dc, first glyph, count, glyph array, ABC) and GetCharWidthI(dc, first glyph, count, glyph array, widths).
 	for (const bool abc : {true, false})
 		registry.add(abc ? "GetCharABCWidthsI" : "GetCharWidthI", 5, [=, this](ApiCall &call) {
@@ -1452,6 +1514,35 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.store<int32_t>(call[8], 0);
 			call.store<uint32_t>(call[8] + 4, uint32_t(total));
 			call.store<int32_t>(call[8] + 8, 0);
+		}
+		call.ret(0);
+	});
+	// ScriptGetLogicalWidths(analysis, characters, glyphs, glyph advances, clusters, visual attributes, character widths): each run of
+	// characters that names the same first glyph is one cluster, and the advances of its glyphs, up to the next cluster's first glyph, are
+	// shared out evenly among its characters, the last taking what does not divide. Clusters run left to right, as ScriptShape makes them.
+	registry.add("ScriptGetLogicalWidths", 7, [](ApiCall &call) {
+		const int32_t characters = call.i32(1), glyphs = call.i32(2);
+		if (characters <= 0 || glyphs <= 0 || !call[3] || !call[4] || !call[6] || characters > 0x100000 || glyphs > 0x100000)
+			return call.ret(uint32_t(0x80070057));
+		std::vector<int32_t> advance(size_t(glyphs), 0);
+		std::vector<uint16_t> cluster(size_t(characters), 0);
+		for (int32_t index = 0; index < glyphs; ++index)
+			advance[size_t(index)] = call.load<int32_t>(call[3] + uint64_t(index) * 4);
+		for (int32_t index = 0; index < characters; ++index)
+			cluster[size_t(index)] = call.load<uint16_t>(call[4] + uint64_t(index) * 2);
+		for (int32_t first = 0; first < characters;) {
+			int32_t last = first + 1;
+			while (last < characters && cluster[size_t(last)] == cluster[size_t(first)])
+				++last;
+			const int32_t start = std::min<int32_t>(cluster[size_t(first)], glyphs);
+			const int32_t stop = last < characters ? std::clamp<int32_t>(cluster[size_t(last)], start, glyphs) : glyphs;
+			int32_t width = 0;
+			for (int32_t glyph = start; glyph < stop; ++glyph)
+				width += advance[size_t(glyph)];
+			const int32_t count = last - first, share = width / count;
+			for (int32_t index = first; index < last; ++index)
+				call.store<int32_t>(call[6] + uint64_t(index) * 4, index + 1 == last ? width - share * (count - 1) : share);
+			first = last;
 		}
 		call.ret(0);
 	});
