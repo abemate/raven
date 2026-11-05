@@ -701,6 +701,11 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			call.ret(key_characters(code).first ? std::toupper(key_characters(code).first) : 0);
 		}
 	});
+	// MapVirtualKeyEx maps through the one keyboard layout too, whichever layout it names.
+	for (const auto *name : {"MapVirtualKeyW", "MapVirtualKeyA"}) {
+		const auto handler = registry.find(name)->second;
+		registry.add(std::string(name, 13) + "Ex" + name[13], 3, handler);
+	}
 	// There is one keyboard layout, whichever layout VkKeyScanEx names.
 	const auto key_scan = [](ApiCall &call) {
 		const char16_t c = char16_t(call.u32(0));
