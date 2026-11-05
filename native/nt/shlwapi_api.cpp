@@ -1126,6 +1126,38 @@ void register_shlwapi_api(ApiRegistry &registry, KernelContext &context)
 			}
 		call.ret(0);
 	});
+	// StrRStrI(text, end, search): the last place before end, or before the terminator when end is null, where the search starts,
+	// ignoring case; a match may run past end. Nothing is found for an empty search.
+	registry.add("StrRStrIW", 3, [](ApiCall &call) {
+		if (!call[0] || !call[2])
+			return call.ret(0);
+		const auto text = call.wide(call[0], whole_text), needle = call.wide(call[2]);
+		size_t end = text.size();
+		if (call[1] && call[1] >= call[0])
+			end = std::min<size_t>(end, (call[1] - call[0]) / 2);
+		if (needle.empty())
+			return call.ret(0);
+		for (size_t at = end; at-- > 0;)
+			if (at + needle.size() <= text.size() && equal_fold(std::u16string_view(text).substr(at, needle.size()), needle))
+				return call.ret(call[0] + at * 2);
+		call.ret(0);
+	});
+	registry.add("StrRStrIA", 3, [](ApiCall &call) {
+		if (!call[0] || !call[2])
+			return call.ret(0);
+		const auto text = call.narrow(call[0], whole_text), needle = call.narrow(call[2]);
+		size_t end = text.size();
+		if (call[1] && call[1] >= call[0])
+			end = std::min<size_t>(end, call[1] - call[0]);
+		if (needle.empty())
+			return call.ret(0);
+		const auto fold = [](char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : c; };
+		for (size_t at = end; at-- > 0;)
+			if (at + needle.size() <= text.size() && std::equal(needle.begin(), needle.end(), text.begin() + at,
+					[&](char a, char b) { return fold(a) == fold(b); }))
+				return call.ret(call[0] + at);
+		call.ret(0);
+	});
 	registry.add("StrChrW", 2, [](ApiCall &call) {
 		const auto text = call.wide(call[0], whole_text);
 		const auto found = text.find(char16_t(call[1]));
