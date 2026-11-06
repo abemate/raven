@@ -158,6 +158,7 @@ def main():
     parser.add_argument("--stage", choices=STAGES, default="window")
     parser.add_argument("--x11", action="store_true")
     parser.add_argument("--pdf", type=Path, help="open this file (as raven-test.pdf) instead of the generated test document")
+    parser.add_argument("--keep-files", action="store_true", help="keep the copy of the program directory after the run")
     parser.add_argument("--wait", type=int, default=300, help="seconds to wait for the main window")
     parser.add_argument("--keep-open", type=int, default=0, help="seconds to keep the program running at the end")
     args = parser.parse_args()
@@ -236,6 +237,9 @@ def workflow(args):
         if compositor:
             compositor.kill()
             compositor.wait()
+        # The copy of the program is a third of a gigabyte; what a run leaves to look at is its log, screenshots and prefix.
+        if not args.keep_files:
+            shutil.rmtree(program_directory, ignore_errors=True)
 
 
 if __name__ == "__main__":
