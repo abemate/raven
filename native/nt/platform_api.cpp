@@ -972,6 +972,18 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(0);
 	});
 	registry.add("CoRevokeClassObject", 1, [](ApiCall &call) { call.ret(0); });
+	// Class objects registered suspended (REGCLS_SUSPENDED) become available together; as nobody else asks for them, there is nothing
+	// to hold back or let go, and both succeed.
+	registry.add("CoResumeClassObjects", 0, [](ApiCall &call) { call.ret(0); });
+	registry.add("CoSuspendClassObjects", 0, [](ApiCall &call) { call.ret(0); });
+	// The reference count a local server keeps of itself: each call answers the count after it, and releasing never goes below zero.
+	static std::atomic<uint32_t> server_references{0};
+	registry.add("CoAddRefServerProcess", 0, [](ApiCall &call) { call.ret(++server_references); });
+	registry.add("CoReleaseServerProcess", 0, [](ApiCall &call) {
+		uint32_t count = server_references.load();
+		while (count && !server_references.compare_exchange_weak(count, count - 1)) {}
+		call.ret(count ? count - 1 : 0);
+	});
 	registry.add("CoGetClassObject", 5, [](ApiCall &call) {
 		if (call[4]) call.store_pointer(call[4], 0);
 		call.ret(class_not_registered);
