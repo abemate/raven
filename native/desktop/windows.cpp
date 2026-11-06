@@ -37,7 +37,7 @@ void NativeWindows::dump_windows()
 		for (const auto handle : objects.window_handles()) {
 			const auto *window=std::as_const(objects).window(handle);
 			const auto *definition=objects.window_class(window->class_id);
-			std::cerr << "window " << std::hex << handle << std::dec << " " << (definition ? definition->name : "?") << " parent=" << std::hex << window->parent << std::dec
+			std::cerr << "window " << std::hex << handle << std::dec << " " << (definition ? definition->name : "?") << " parent=" << std::hex << window->parent << " owner=" << window->owner << " on=" << window->shown_on << std::dec
 				<< " style=" << std::hex << window->style << " ex=" << window->ex_style << std::dec << " visible=" << window->visible
 				<< " outer=" << window->outer.left << "," << window->outer.top << "," << window->outer.right << "," << window->outer.bottom
 				<< " client=" << window->x << "," << window->y << "," << window->width << "x" << window->height
@@ -242,6 +242,10 @@ void NativeWindows::present(uint64_t handle, bool force)
 	const auto *bitmap=objects.bitmap(window->bitmap);
 	if (!bitmap) return;
 	auto pixels=std::span<const uint8_t>(bitmap->pixels().data(),size_t(bitmap->width)*bitmap->height*4);
+	// A layered window UpdateLayeredWindow filled shows that picture, with its alpha.
+	const bool translucent=!window->layered.empty() && window->layered_width==int32_t(bitmap->width) && window->layered_height==int32_t(bitmap->height);
+	if (translucent) pixels=window->layered;
+	if (presentation.translucent) presentation.translucent(handle,translucent);
 	// The frame extended into the client area shows through what the program painted black there, black with no alpha to GDI, as the
 	// Windows compositor shows its frame, and the compositor draws the caption buttons over it when the client area covers the caption.
 	std::vector<uint8_t> glazed;
@@ -272,6 +276,13 @@ void NativeWindows::present(uint64_t handle, bool force)
 	const auto owner=host_owner(*window);
 	const auto *owning=owner && owner!=handle ? objects.window(owner) : nullptr;
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
+		// An owner not on screen yet, still waiting for its first paint, takes the popup along once it shows: the shadow windows of a
+		// drop-down list get their pixels from UpdateLayeredWindow before the list is painted, and shown on their own then, they
+		// would become windows the compositor places, not popups beside the list.
+		if (!owning->presented) {
+			dirty_roots.insert(handle);
+			return;
+		}
 		try {
 			presentation.owned_popup(handle,owner,window->outer.left-owning->outer.left,window->outer.top-owning->outer.top,bitmap->width,bitmap->height,pixels);
 			place_host_surface(handle);
@@ -1229,7 +1240,10 @@ void NativeWindows::release_held_input()
 void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uint32_t buttons,int64_t x,int64_t y)
 {
 	const auto target=capture ? capture : pointer_child(event.window,int32_t(x),int32_t(y));auto *window=objects.window(target);
-	if (!window || !objects.window_visible(target)) return;
+	// The window that captured the mouse receives its input whether it shows or not, as on Windows: a drop-down or a color picker
+	// often gives the capture to a hidden window of its own, which then tracks the clicks on the popup.
+	const auto shown=[&] { return capture ? true : objects.window_visible(target); };
+	if (!window || !shown()) return;
 	track_pointer(target);
 	const bool inset=window->x!=window->outer.left || window->y!=window->outer.top ||
 		int64_t(window->width)!=int64_t(window->outer.right)-window->outer.left ||
@@ -1239,13 +1253,13 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 	window=objects.window(target);
 	if (trace_buttons_enabled() && message!=0x200)
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
-			window && objects.window_visible(target) ? 1 : 0);
-	if (!window || !objects.window_visible(target) || !hit) return;
+			window && shown() ? 1 : 0);
+	if (!window || !shown() || !hit) return;
 	// Unless the mouse is captured, the window under the pointer chooses the cursor before the mouse message arrives.
 	if (!capture && (message==0x200 || message==0x201 || message==0x204 || message==0x207)) {
 		send(target,0x20,target,uint16_t(hit)|(uint64_t(message)<<16));
 		window=objects.window(target);
-		if (!window || !objects.window_visible(target)) return;
+		if (!window || !shown()) return;
 	}
 	// Scroll bars and the frame may run a loop of their own that waits for the release, so what was held goes in first.
 	if (hit!=1 && placing_press) release_held_input();
@@ -1268,7 +1282,7 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 			send(parent,0x210,message,uint16_t(x-ancestor->x)|(uint64_t(uint16_t(y-ancestor->y))<<16));
 			parent=next;
 		}
-		window=objects.window(target);if (!window || !objects.window_visible(target)) return;
+		window=objects.window(target);if (!window || !shown()) return;
 	}
 	if (messages.size()>=10000) throw std::runtime_error("guest input queue limit reached");
 	const Message input{target,buttons|keyboard_map.mouse_modifiers(),uint16_t(x-window->x)|(uint64_t(uint16_t(y-window->y))<<16),message,message_time(),

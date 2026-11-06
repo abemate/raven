@@ -85,6 +85,8 @@ struct WaylandPresentation::State {
 		// What changed since this buffer last received a frame (left, top, right, bottom): only that part is copied into it again.
 		std::array<int32_t,4> stale{0,0,0,0};
 		bool released=false;
+		// ARGB8888 rather than XRGB8888: the fourth byte of each pixel is its (premultiplied) alpha.
+		bool translucent=false;
 		~Buffer() { if (proxy) wl_buffer_destroy(proxy); if (pixels!=MAP_FAILED) munmap(pixels,size); }
 	};
 	struct Surface {
@@ -93,9 +95,12 @@ struct WaylandPresentation::State {
 		xdg_toplevel *role=nullptr;
 		xdg_popup *popup=nullptr;
 		bool is_popup=false;
-		// Where a popup sits on its parent, and whether it took a grab.
+		// Where a popup sits on its parent, the window whose surface that is, and whether it took a grab.
 		int32_t popup_x=0,popup_y=0;
+		uint64_t popup_parent=0;
 		bool grabbed=false;
+		// The window's frames carry alpha (see DesktopPresentation::translucent).
+		bool translucent=false;
 		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false;
 		uint32_t width=0,height=0,pending_width=0,pending_height=0;
 		std::vector<std::unique_ptr<Buffer>> buffers;
@@ -163,6 +168,8 @@ struct WaylandPresentation::State {
 	wl_data_offer *drag_offer=nullptr;
 	uint64_t selection_counter=0;
 	std::map<uint64_t,std::unique_ptr<Surface>> surfaces;
+	// The windows whose frames carry alpha.
+	std::set<uint64_t> translucent;
 	// A surface a graphics driver renders to for one window of the program: a subsurface of the host window of its root, stacked over it
 	// while the window shows and under it while hidden, where the compositor still paces the driver's frames; without a role while the
 	// root has no host window, so that the driver keeps a valid surface while nothing shows it.
@@ -727,7 +734,12 @@ struct WaylandPresentation::State {
 		});
 		Buffer *target=nullptr;
 		size_t pending=0;
+		// Buffers of the other format are let go once the compositor released them; they no longer fit this window's frames.
+		std::erase_if(window.buffers,[&](const std::unique_ptr<Buffer> &buffer) {
+			return buffer->translucent!=window.translucent && buffer->released && buffer.get()!=window.shown;
+		});
 		for (const auto &buffer : window.buffers) {
+			if (buffer->translucent!=window.translucent) continue;
 			if (buffer->released && buffer.get()!=window.shown && !target) target=buffer.get();
 			else if (!buffer->released) ++pending;
 		}
@@ -738,6 +750,7 @@ struct WaylandPresentation::State {
 				for (const auto &buffer : surface->buffers) used+=buffer->size;
 			if (used+pixels.size()>256*1024*1024) throw std::runtime_error("Wayland presentation memory limit reached");
 			auto buffer=std::make_unique<Buffer>(); buffer->size=pixels.size(); buffer->width=width; buffer->height=height;
+			buffer->translucent=window.translucent;
 			buffer->stale={0,0,int32_t(width),int32_t(height)};
 			const int descriptor=int(syscall(SYS_memfd_create,"raven-frame",MFD_CLOEXEC));
 			if (descriptor<0) throw std::runtime_error("Wayland frame descriptor failed");
@@ -745,7 +758,7 @@ struct WaylandPresentation::State {
 			buffer->pixels=mmap(nullptr,buffer->size,PROT_READ|PROT_WRITE,MAP_SHARED,descriptor,0);
 			if (buffer->pixels==MAP_FAILED) { close(descriptor); throw std::runtime_error("Wayland frame mapping failed"); }
 			wl_shm_pool *pool=wl_shm_create_pool(shm,descriptor,int32_t(buffer->size)); close(descriptor);
-			buffer->proxy=wl_shm_pool_create_buffer(pool,0,int32_t(width),int32_t(height),int32_t(width*4),WL_SHM_FORMAT_XRGB8888);
+			buffer->proxy=wl_shm_pool_create_buffer(pool,0,int32_t(width),int32_t(height),int32_t(width*4),window.translucent ? WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888);
 			wl_shm_pool_destroy(pool);
 			static const wl_buffer_listener buffer_listener{[](void *data,wl_buffer *) { static_cast<Buffer *>(data)->released=true; }};
 			wl_buffer_add_listener(buffer->proxy,&buffer_listener,buffer.get());
@@ -776,6 +789,16 @@ struct WaylandPresentation::State {
 		if (window.closed) throw std::runtime_error("Wayland surface was closed during presentation");
 	}
 
+	// Takes a window's surface away, and first the popups on it, the topmost first: the compositor ends the connection when a popup
+	// goes while another still sits on it, as the shadow windows of a drop-down list do on the list. Answers whether there was one.
+	bool drop_surface(uint64_t handle) {
+		std::vector<uint64_t> children;
+		for (const auto &[key,surface] : surfaces)
+			if (surface->is_popup && surface->popup_parent==handle && key!=handle) children.push_back(key);
+		for (const auto child : children) drop_surface(child);
+		return surfaces.erase(handle)!=0;
+	}
+
 	void popup_surface(uint64_t handle,uint64_t parent,int32_t x,int32_t y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels,
 		bool grab=true) {
 		if (!handle || !width || !height || width>4096 || height>4096 || pixels.size()!=size_t(width)*height*4)
@@ -785,7 +808,7 @@ struct WaylandPresentation::State {
 		// A popup that moved or changed size is made again where it now is; one that was a window before becomes a popup.
 		if (found!=surfaces.end() && !grab && (!found->second->is_popup || found->second->popup_x!=x || found->second->popup_y!=y ||
 			found->second->width!=width || found->second->height!=height || found->second->closed)) {
-			surfaces.erase(found);
+			drop_surface(handle);
 			found=surfaces.end();
 		}
 		if (found==surfaces.end()) {
@@ -793,14 +816,18 @@ struct WaylandPresentation::State {
 			if (owner==surfaces.end()) throw std::runtime_error("Wayland popup has no presented parent surface");
 			auto window=std::make_unique<Surface>();
 			window->width=width; window->height=height; window->is_popup=true;
-			window->popup_x=x; window->popup_y=y; window->grabbed=grab;
+			window->popup_x=x; window->popup_y=y; window->grabbed=grab; window->popup_parent=parent;
 			window->proxy=wl_compositor_create_surface(compositor);
 			window->shell=xdg_wm_base_get_xdg_surface(shell,window->proxy);
 			xdg_positioner *positioner=xdg_wm_base_create_positioner(shell);
 			xdg_positioner_set_size(positioner,int32_t(width),int32_t(height));
-			xdg_positioner_set_anchor_rect(positioner,x,y,1,1);
+			// The anchor is the parent's corner, which always lies inside it, and the offset places the popup where the program put
+			// it, also outside the parent: the shadow windows around a drop-down list sit just beyond its edges, and an anchor
+			// rectangle out there is one the compositor refuses.
+			xdg_positioner_set_anchor_rect(positioner,0,0,1,1);
 			xdg_positioner_set_anchor(positioner,XDG_POSITIONER_ANCHOR_TOP_LEFT);
 			xdg_positioner_set_gravity(positioner,XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+			xdg_positioner_set_offset(positioner,x,y);
 			window->popup=xdg_surface_get_popup(window->shell,owner->second->shell,positioner);
 			xdg_positioner_destroy(positioner);
 			static const xdg_surface_listener surface_listener{[](void *data,xdg_surface *surface,uint32_t serial) {
@@ -826,6 +853,7 @@ struct WaylandPresentation::State {
 		auto &window=*found->second;
 		if (!window.is_popup || window.closed || window.width!=width || window.height!=height)
 			throw std::runtime_error("Wayland popup cannot accept this frame");
+		window.translucent=translucent.contains(handle);
 		attach_frame(window,width,height,pixels);
 	}
 
@@ -957,7 +985,7 @@ struct WaylandPresentation::State {
 		auto found=surfaces.find(handle);
 		// A window shown as a popup until now becomes a window of its own.
 		if (found!=surfaces.end() && found->second->is_popup) {
-			surfaces.erase(found);
+			drop_surface(handle);
 			found=surfaces.end();
 		}
 		if (found==surfaces.end()) {
@@ -1011,6 +1039,7 @@ struct WaylandPresentation::State {
 		if (window.pending_width==width && window.pending_height==height) window.resized=false;
 		window.width=width; window.height=height;
 		xdg_surface_set_window_geometry(window.shell,0,0,int32_t(width),int32_t(height));
+		window.translucent=translucent.contains(handle);
 		attach_frame(window,width,height,pixels);
 		if (window.first_frame) {
 			window.first_frame=false;
@@ -1026,16 +1055,26 @@ WaylandPresentation::~WaylandPresentation()=default;
 
 DesktopPresentation WaylandPresentation::callbacks()
 {
+	auto callbacks=make_callbacks();
+	callbacks.translucent=[this](uint64_t handle,bool translucent) {
+		if (translucent) state->translucent.insert(handle); else state->translucent.erase(handle);
+	};
+	return callbacks;
+}
+
+DesktopPresentation WaylandPresentation::make_callbacks()
+{
 	return {[this](uint64_t handle,std::string_view title,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) {
 		state->present(handle,title,width,height,pixels);
 	},[this](uint64_t handle) {
 		state->maximized.erase(handle);
+		state->translucent.erase(handle);
 		if (state->pointer_window==handle) state->pointer_window=0;
 		if (state->keyboard_window==handle) state->keyboard_window=0;
 		std::erase_if(state->pending,[&](const DesktopEvent &event) { return event.window==handle; });
 		if (state->constrained_window==handle) state->release_constraint();
 		std::erase_if(state->overlays,[&](const auto &entry) { return entry.second->root==handle; });
-		if (state->surfaces.erase(handle) && state->display) state->sync();
+		if (state->drop_surface(handle) && state->display) state->sync();
 	},
 	[this](std::chrono::milliseconds budget) {
 		std::vector<DesktopEvent> events;

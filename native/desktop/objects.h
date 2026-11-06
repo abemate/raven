@@ -259,6 +259,10 @@ struct DesktopWindow {
 	DesktopRect outer{x,y,int32_t(int64_t(x)+width),int32_t(int64_t(y)+height)};
 	uint64_t parent = 0,child_id = 0;
 	uint32_t ex_style = 0;
+	// What UpdateLayeredWindow last gave a layered window: its premultiplied BGRA pixels, which the window shows instead of what is painted
+	// on its surface, with their alpha, as Windows composes such a window (and sends it no WM_PAINT). Empty for any other window.
+	std::vector<uint8_t> layered;
+	int32_t layered_width = 0, layered_height = 0;
 	// SetWindowDisplayAffinity: whether the window asks to be left out of screen captures.
 	uint32_t display_affinity = 0;
 	// An overlapped window created hidden receives WM_SIZE and WM_MOVE when it is first shown rather than while it is created.

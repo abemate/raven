@@ -12,6 +12,9 @@ public:
 	WaylandPresentation(const WaylandPresentation &)=delete;
 	WaylandPresentation &operator=(const WaylandPresentation &)=delete;
 	DesktopPresentation callbacks();
+private:
+	DesktopPresentation make_callbacks();
+public:
 
 private:
 	struct State;

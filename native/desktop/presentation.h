@@ -89,6 +89,9 @@ struct DesktopPresentation {
 	// Keeps a top-level window above the top-level window that owns it, as Windows keeps an owned dialog; 0 for no owner. Given before the
 	// window's first frame.
 	std::function<void(uint64_t handle,uint64_t owner)> transient_for;
+	// Whether a window's frames carry alpha (premultiplied, in the fourth byte of each pixel), as a layered window that
+	// UpdateLayeredWindow fills does, so the desktop shows through where they are transparent. Absent, every frame is opaque.
+	std::function<void(uint64_t handle,bool translucent)> translucent;
 };
 
 }

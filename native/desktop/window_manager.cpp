@@ -1,4 +1,5 @@
 #include "windows.h"
+#include "gdi.h"
 #include <unistd.h>
 #include "nt/system_exports.h"
 #include "nt/child_process.h"
@@ -960,11 +961,103 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	// Layered window attributes are kept per window for GetLayeredWindowAttributes; the compositor draws windows opaque.
 	auto layered = std::make_shared<std::map<uint64_t, std::array<uint32_t, 3>>>();
+	// UpdateLayeredWindow(window, screen DC, position, size, source DC, source point, color key, BLENDFUNCTION, flags): the window moves
+	// and takes the size given, and its picture becomes the source's, with alpha: ULW_ALPHA scales it by the constant alpha and, with
+	// AC_SRC_ALPHA, by each pixel's premultiplied alpha; ULW_COLORKEY makes the key color transparent; ULW_OPAQUE shows it opaque. The
+	// window shows that picture rather than anything painted on it. A desktop that cannot show alpha keeps such windows away instead:
+	// their pictures are drop shadows and glows, which shown opaque are black bars.
 	registry.add("UpdateLayeredWindow", 9, [this](ApiCall &call) {
-		if (!std::as_const(objects).window(call[0])) {
+		auto *window = objects.window(call[0]);
+		if (!window) {
 			call.fail(1400);
 			return;
 		}
+		if (!presentation.translucent) {
+			call.ret(1);
+			return;
+		}
+		const uint32_t flags = call.u32(8);
+		int32_t x = window->outer.left, y = window->outer.top;
+		int32_t width = window->outer.right - window->outer.left, height = window->outer.bottom - window->outer.top;
+		if (call[2]) {
+			x = call.load<int32_t>(call[2]);
+			y = call.load<int32_t>(call[2] + 4);
+		}
+		if (call[3]) {
+			width = call.load<int32_t>(call[3]);
+			height = call.load<int32_t>(call[3] + 4);
+			if (width <= 0 || height <= 0) {
+				call.fail(87);
+				return;
+			}
+		}
+		try {
+			if (x != window->outer.left || y != window->outer.top || width != window->outer.right - window->outer.left ||
+				height != window->outer.bottom - window->outer.top)
+				place_window(call[0], {x, y, x + width, y + height}, 0, 0x4 | 0x10);
+		} catch (uint32_t error) {
+			call.fail(error);
+			return;
+		}
+		window = objects.window(call[0]);
+		if (!window) {
+			call.fail(1400);
+			return;
+		}
+		if (call[4]) {
+			auto *source_dc = objects.dc(call[4]);
+			const auto *source = source_dc ? objects.bitmap(source_dc->bitmap) : nullptr;
+			if (!source) {
+				call.fail(6);
+				return;
+			}
+			const int32_t sx = call[5] ? call.load<int32_t>(call[5]) : 0, sy = call[5] ? call.load<int32_t>(call[5] + 4) : 0;
+			uint32_t constant = 255, per_pixel = 0;
+			if ((flags & 2) && call[7]) {
+				const auto blend = call.read(call[7], 4);
+				constant = blend[2];
+				per_pixel = blend[3] & 1;
+			}
+			const uint32_t key = call.u32(6) & 0xffffff;
+			const auto pixels = source->pixels();
+			const size_t stride = bitmap_row_bytes(*source);
+			std::vector<uint8_t> picture(size_t(width) * height * 4, 0);
+			for (int32_t row = 0; row < height; ++row)
+				for (int32_t column = 0; column < width; ++column) {
+					const int64_t px = int64_t(sx) + column, py = int64_t(sy) + row;
+					if (px < 0 || py < 0 || px >= source->width || py >= source->height)
+						continue;
+					const size_t line = source->top_down ? size_t(py) : source->height - 1 - size_t(py);
+					const uint8_t *from = pixels.data() + line * stride;
+					uint32_t blue, green, red, alpha = 255;
+					if (source->depth == 32) {
+						blue = from[px * 4]; green = from[px * 4 + 1]; red = from[px * 4 + 2];
+						if (per_pixel)
+							alpha = from[px * 4 + 3];
+					} else {
+						const uint32_t color = bitmap_color(*source, from, px);
+						red = color & 0xff; green = (color >> 8) & 0xff; blue = (color >> 16) & 0xff;
+					}
+					if ((flags & 1) && (red | green << 8 | blue << 16) == key) {
+						blue = green = red = alpha = 0;
+					} else if (flags & 4) {
+						alpha = 255;
+					} else {
+						// Premultiplied output: a source without per-pixel alpha is opaque (alpha 255) before the constant alpha scales it.
+						alpha = alpha * constant / 255;
+						blue = blue * constant / 255; green = green * constant / 255; red = red * constant / 255;
+					}
+					uint8_t *to = picture.data() + (size_t(row) * width + column) * 4;
+					to[0] = uint8_t(std::min(blue, alpha)); to[1] = uint8_t(std::min(green, alpha)); to[2] = uint8_t(std::min(red, alpha)); to[3] = uint8_t(alpha);
+				}
+			window->layered = std::move(picture);
+			window->layered_width = width;
+			window->layered_height = height;
+			// Windows sends a window it composes this way no WM_PAINT: nothing waits for one before it shows.
+			objects.validate(call[0], DesktopRect{0, 0, window->width, window->height});
+			window->painted = true;
+		}
+		drawing(call[0]);
 		call.ret(1);
 	});
 	registry.add("SetLayeredWindowAttributes", 4, [this, layered](ApiCall &call) {
