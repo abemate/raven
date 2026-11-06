@@ -1,6 +1,7 @@
 #include "host_names.h"
 #include "firmware.h"
 #include "kernel_context.h"
+#include "mapped_files.h"
 #include "section.h"
 #include "security_attributes.h"
 #include "text.h"
@@ -24,6 +25,8 @@ struct View {
 	std::shared_ptr<SectionObject> mapping;
 	uint64_t offset = 0, size = 0;
 	bool writable = false;
+	// Shares the pages of the section's file, which then may not become shorter than the view reaches.
+	bool shares_file = false;
 };
 
 // A section made with SEC_IMAGE maps its file as the loader lays a program out: the headers, then each section at its own address with
@@ -362,6 +365,14 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			::fstat(mapping->file->descriptor, &metadata);
 			const uint64_t maximum = uint64_t(call.u32(3)) << 32 | call.u32(4);
 			mapping->size = maximum ? maximum : uint64_t(metadata.st_size);
+			// A section that may be written and is larger than its file grows the file to its size, as Windows does, so every view
+			// of it lies in the file and can share the file's pages.
+			const uint32_t page = call.u32(2) & 0xff;
+			if ((page == 0x04 || page == 0x40) && mapping->size > uint64_t(metadata.st_size) &&
+				(::fcntl(mapping->file->descriptor, F_GETFL) & O_ACCMODE) == O_RDWR && ::ftruncate(mapping->file->descriptor, off_t(mapping->size))) {
+				call.fail(errno == ENOSPC ? 112 : 5);
+				return;
+			}
 		} else {
 			mapping->size = uint64_t(call.u32(3)) << 32 | call.u32(4);
 			if (!mapping->size) {
@@ -657,16 +668,36 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(address);
 			return;
 		}
+		// A view the program may write is the file itself too, unless it asked for a private copy (FILE_MAP_COPY, or a copy-on-write
+		// section): every view of the section then sees what another wrote, as on Windows, where a program that writes through one view
+		// and reads through a second, as PDF-XChange's stream store does, finds its data.
+		if (mapping->file && (call.u32(1) & 0x2) && (mapping->protection & 0xff) != 0x08 && (mapping->protection & 0xff) != 0x80 &&
+			(::fcntl(mapping->file->descriptor, F_GETFL) & O_ACCMODE) == O_RDWR) {
+			struct stat status{};
+			if (::fstat(mapping->file->descriptor, &status) == 0 && offset + size <= uint64_t(status.st_size)) {
+				const auto view = memory.map_view(mapping->file->descriptor, offset, size, call.u32(1) & 0x20 ? 0x40 : 0x04);
+				if (!view.status) {
+					views[view.address] = {mapping, offset, size, false, true};
+					MappedFiles::Key key;
+					if (MappedFiles::key_of(mapping->file->descriptor, key))
+						MappedFiles::instance().add(key, offset + size);
+					call.ret(view.address);
+					return;
+				}
+			}
+		}
 		// A view that can only be read is the file itself, as on Windows: a program that maps a library of hundreds of megabytes to
-		// read it would otherwise have the whole file copied into its memory. A view the program may write, or one past the end of the
-		// file, is copied as before.
+		// read it would otherwise have the whole file copied into its memory. A view past the end of the file is copied as before.
 		if (mapping->file && !(call.u32(1) & 0x3)) {
 			struct stat status{};
 			if (::fstat(mapping->file->descriptor, &status) == 0 && offset + size <= uint64_t(status.st_size)) {
 				try {
 					const auto view = memory.map_view(mapping->file->descriptor, offset, size, call.u32(1) & 0x20 ? 0x20 : 0x02);
 					if (!view.status) {
-						views[view.address] = {mapping, offset, size, false};
+						views[view.address] = {mapping, offset, size, false, true};
+						MappedFiles::Key key;
+						if (MappedFiles::key_of(mapping->file->descriptor, key))
+							MappedFiles::instance().add(key, offset + size);
 						call.ret(view.address);
 						return;
 					}
@@ -717,6 +748,11 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		write_back(call[0], call);
+		if (const auto &view = views.at(call[0]); view.shares_file) {
+			MappedFiles::Key key;
+			if (MappedFiles::key_of(view.mapping->file->descriptor, key))
+				MappedFiles::instance().remove(key, view.offset + view.size);
+		}
 		views.erase(call[0]);
 		memory.free(call[0], 0, 0x8000);
 		call.ret(1);

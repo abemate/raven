@@ -9,6 +9,7 @@
 #include "security_attributes.h"
 #include "kernel_context.h"
 #include "file_objects.h"
+#include "mapped_files.h"
 #include "restart.h"
 #include "text.h"
 
@@ -879,6 +880,10 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const off_t position = ::lseek(file->descriptor, 0, SEEK_CUR);
+		if (position >= 0 && !MappedFiles::instance().may_shorten(file->descriptor, uint64_t(position))) {
+			call.fail(1224);
+			return;
+		}
 		if (position < 0 || ::ftruncate(file->descriptor, position)) {
 			call.fail(error_of(errno));
 			return;
@@ -1209,7 +1214,12 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				call.fail(requested < 0 ? 87 : 5);
 				return;
 			}
-			// An allocation size only shortens a file that is longer; the end of file sets the length either way.
+			// An allocation size only shortens a file that is longer; the end of file sets the length either way. A view of the file
+			// past the new end keeps it from shortening, as SetEndOfFile.
+			if (requested < metadata.st_size && !MappedFiles::instance().may_shorten(file->descriptor, uint64_t(requested))) {
+				call.fail(1224);
+				return;
+			}
 			if ((call.u32(1) == 6 || requested < metadata.st_size) && ::ftruncate(file->descriptor, off_t(requested))) {
 				call.fail(error_of(errno));
 				return;
