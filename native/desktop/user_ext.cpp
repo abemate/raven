@@ -918,6 +918,69 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 		call.ret(handle);
 	});
 
+	// ---- frame and process settings ----
+	// The layout new windows of the process take: SetProcessDefaultLayout is not offered, so it stays left to right (0).
+	registry.add("GetProcessDefaultLayout", 1, [](ApiCall &call) {
+		if (!call[0]) {
+			call.fail(998);
+			return;
+		}
+		call.store<uint32_t>(call[0], 0);
+		call.ret(1);
+	});
+	// GetTitleBarInfo(window, TITLEBARINFO): the caption, between the frame's top border and the client area, in screen coordinates,
+	// and the state of the title bar and its buttons: invisible when the style has no caption, minimize, maximize, help or close
+	// (system menu) button, unavailable when the window is disabled.
+	registry.add("GetTitleBarInfo", 2, [this](ApiCall &call) {
+		const auto *window = std::as_const(objects).window(call[0]);
+		if (!window) {
+			call.fail(1400);
+			return;
+		}
+		if (!call[1] || call.load<uint32_t>(call[1]) != 44) {
+			call.fail(87);
+			return;
+		}
+		constexpr uint32_t invisible = 0x8000, unavailable = 0x1, focusable = 0x100000;
+		const bool caption = (window->style & 0x00c00000U) == 0x00c00000U, disabled = (window->style & 0x08000000U) != 0;
+		const int32_t border = std::max(0, window->x - window->outer.left);
+		const Rect bar = caption ? Rect{window->outer.left + border, window->outer.top + border, window->outer.right - border, window->y} : Rect{0, 0, 0, 0};
+		const auto button = [&](bool present) { return !caption || !present ? invisible : disabled ? unavailable : 0U; };
+		const uint32_t states[6] = {caption ? focusable : invisible, 0, button(window->style & 0x20000U), button(window->style & 0x10000U),
+			button((window->ex_style & 0x400U) != 0), button(window->style & 0x80000U)};
+		write_rect(call, call[1] + 4, bar);
+		for (size_t index = 0; index < 6; ++index)
+			call.store<uint32_t>(call[1] + 20 + index * 4, states[index]);
+		call.ret(1);
+	});
+	// The window animations are off here (SPI_GETANIMATION answers no minimize animation), so DrawAnimatedRects draws nothing and, as
+	// Windows does with animations turned off, succeeds.
+	registry.add("DrawAnimatedRects", 4, [](ApiCall &call) { call.ret(1); });
+	// BroadcastSystemMessage(flags, recipients, message, wParam, lParam): no other program's windows live here, so applications (or
+	// every recipient, when none is named) are the top-level windows of this process, unless BSF_IGNORECURRENTTASK leaves them out.
+	// BSF_POSTMESSAGE posts the message; otherwise each window is sent it. The answer is positive when it went out.
+	for (const bool wide : {true, false})
+		registry.add(wide ? "BroadcastSystemMessageW" : "BroadcastSystemMessageA", 5, [this](ApiCall &call) {
+			const uint32_t flags = call.u32(0);
+			const uint32_t recipients = call[1] ? call.load<uint32_t>(call[1]) : 0;
+			if (recipients && !(recipients & 0x8)) {
+				call.ret(1);
+				return;
+			}
+			if (!(flags & 0x2))
+				for (const auto window : top_level_windows()) {
+					if (!std::as_const(objects).window(window))
+						continue;
+					if (flags & 0x10)
+						post(window, call.u32(2), call[3], call[4]);
+					else
+						send(window, call.u32(2), call[3], call[4]);
+				}
+			if (call[1])
+				call.store<uint32_t>(call[1], recipients ? recipients & 0x8 : 0x8);
+			call.ret(1);
+		});
+
 	// ---- scrolling the client area ----
 	// ScrollDC(dc, dx, dy, scroll rectangle, clip rectangle, update region, update rectangle): the bits of the scroll rectangle (the
 	// whole surface without one) move by dx, dy, landing only inside the clip rectangle; nothing is invalidated. What the move
