@@ -5,6 +5,7 @@
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkStream.h"
 #include "include/core/SkTypeface.h"
 #include "include/ports/SkFontMgr_empty.h"
 #include <algorithm>
@@ -378,6 +379,77 @@ std::vector<uint8_t> TextRenderer::logical_table(std::span<const uint8_t,92> def
 	std::vector<uint8_t> bytes(size);
 	if (size && face->getTableData(tag,0,size,bytes.data())!=size) bytes.clear();
 	return bytes;
+}
+
+std::vector<uint8_t> TextRenderer::logical_file(std::span<const uint8_t,92> definition,bool &collection)
+{
+	collection=false;
+	if (is_marlett(definition)) return {};
+	const auto font=state->logical(definition);
+	const auto *face=font.getTypeface();
+	int index=0;
+	const auto stream=face ? face->openStream(&index) : nullptr;
+	if (!stream || !stream->hasLength()) return {};
+	std::vector<uint8_t> bytes(stream->getLength());
+	if (stream->read(bytes.data(),bytes.size())!=bytes.size()) return {};
+	collection=bytes.size()>=4 && std::equal(bytes.begin(),bytes.begin()+4,"ttcf");
+	return bytes;
+}
+
+std::vector<uint16_t> TextRenderer::glyph_indices(std::span<const uint8_t,92> definition,std::span<const uint16_t> text,bool mark_missing)
+{
+	if (is_marlett(definition)) return {text.begin(),text.end()};
+	const auto font=state->logical(definition);
+	std::vector<uint16_t> result(text.size());
+	for (size_t i=0;i<text.size();++i) {
+		SkGlyphID id=0;
+		font.textToGlyphs(&text[i],2,SkTextEncoding::kUTF16,{&id,1});
+		result[i]=id || !mark_missing ? id : 0xffff;
+	}
+	return result;
+}
+
+std::vector<int32_t> TextRenderer::glyph_advances(std::span<const uint8_t,92> definition,std::span<const uint16_t> glyphs)
+{
+	if (is_marlett(definition)) return logical_advances(definition,glyphs);
+	const auto font=state->logical(definition);
+	const auto count=font.getTypeface() ? font.getTypeface()->countGlyphs() : 0;
+	std::vector<int32_t> result; result.reserve(glyphs.size());
+	// Prefixes round the running sum, as logical_advances does, so a run measures the same glyph by glyph or at once.
+	float total=0;
+	for (const auto glyph:glyphs) {
+		SkScalar width=0;
+		if (glyph<count) { const SkGlyphID id=glyph; font.getWidths({&id,1},{&width,1}); }
+		total+=width;
+		result.push_back(int32_t(std::lround(total)));
+	}
+	return result;
+}
+
+std::vector<uint8_t> TextRenderer::render_glyphs(std::span<const uint8_t,92> definition,std::span<const uint16_t> glyphs,
+	uint32_t width,uint32_t height,int32_t origin_x,int32_t origin_y,std::span<const int32_t> offsets)
+{
+	if (is_marlett(definition)) return render(definition,glyphs,width,height,origin_x,origin_y,offsets);
+	if (!width || !height || width>16384 || height>16384 || uint64_t(width)*height>32*1024*1024) throw uint32_t(87);
+	auto font=state->logical(definition);
+	const auto count=font.getTypeface() ? font.getTypeface()->countGlyphs() : 0;
+	std::vector<uint8_t> alpha(size_t(width)*height);
+	SkBitmap bitmap;
+	if (!bitmap.installPixels(SkImageInfo::MakeA8(int(width),int(height)),alpha.data(),width)) throw std::bad_alloc();
+	SkCanvas canvas(bitmap); canvas.clear(SK_ColorTRANSPARENT);
+	SkPaint paint; paint.setColor(SK_ColorBLACK); paint.setAntiAlias(font.getEdging()!=SkFont::Edging::kAlias);
+	SkFontMetrics source; font.getMetrics(&source);
+	const auto baseline=SkScalar(origin_y)+SkScalar(std::lround(-source.fAscent));
+	const auto cumulative=glyph_advances(definition,glyphs);
+	std::vector<SkGlyphID> drawn; std::vector<SkPoint> points;
+	for (size_t i=0;i<glyphs.size();++i) {
+		if (glyphs[i]>=count) continue;
+		const SkScalar x=offsets.empty() ? SkScalar(i ? cumulative[i-1] : 0) : SkScalar(offsets[i]);
+		drawn.push_back(glyphs[i]);
+		points.push_back({SkScalar(origin_x)+x,baseline});
+	}
+	if (!drawn.empty()) canvas.drawGlyphs({drawn.data(),drawn.size()},{points.data(),points.size()},{0,0},font,paint);
+	return alpha;
 }
 
 uint32_t TextRenderer::logical_units_per_em(std::span<const uint8_t,92> definition)

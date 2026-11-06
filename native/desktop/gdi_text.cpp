@@ -206,8 +206,9 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		}
 	};
 	// Draws one run of text with GDI alignment, background and clipping rules; returns the run's advance width.
+	// With glyphs, the run holds glyph indices of the selected face (ETO_GLYPH_INDEX, ScriptTextOut) instead of characters.
 	const auto draw_run = [this, measured_advances](DesktopDC &dc, int32_t x, int32_t y, uint32_t options, const DesktopRect *clip_rect,
-		std::u16string_view text, std::span<const int32_t> deltas) -> int32_t {
+		std::u16string_view text, std::span<const int32_t> deltas, bool glyphs = false) -> int32_t {
 		Painter painter(objects, dc);
 		const auto &font = *objects.font(dc.font);
 		const auto metrics = objects.text().logical_metrics(font.definition);
@@ -228,7 +229,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 				}
 				advance = position;
 			} else {
-				const auto cumulative = measured_advances(font.definition, units);
+				const auto cumulative = glyphs ? objects.text().glyph_advances(font.definition, units) : measured_advances(font.definition, units);
 				advance = cumulative.back();
 			}
 		}
@@ -265,7 +266,9 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		std::vector<uint8_t> coverage;
 		try {
 			// Qualified fonts keep their measured monochrome glyphs; everything else is anti-aliased.
-			try {
+			if (glyphs)
+				coverage = objects.text().render_glyphs(font.definition, units, box_width, box_height, margin, 2, offsets);
+			else try {
 				std::vector<std::array<int32_t, 2>> positions;
 				for (const auto offset : offsets)
 					positions.push_back({offset, 0});
@@ -387,7 +390,8 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 				throw uint32_t(87);
 			if (count < 0)
 				throw uint32_t(87);
-			const auto text = count > 0 ? widen(call, call[5], count, ansi) : std::u16string();
+			const bool glyphs = (options & 0x10) != 0;
+			const auto text = count > 0 ? widen(call, call[5], count, ansi && !glyphs) : std::u16string();
 			std::vector<int32_t> deltas;
 			if (call[7] && count > 0) {
 				const bool pair = (options & 0x2000) != 0;
@@ -403,7 +407,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 				x = dc.position_x;
 				y = dc.position_y;
 			}
-			const auto advance = draw_run(dc, x, y, options, rect ? &*rect : nullptr, text, deltas);
+			const auto advance = draw_run(dc, x, y, options, rect ? &*rect : nullptr, text, deltas, glyphs);
 			if (dc.text_align & 1)
 				dc.position_x = x + advance;
 			call.ret(1);
@@ -731,13 +735,21 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		});
 	});
 	// GetFontData(dc, table, offset, buffer, size): a table of the font file the selected font uses, its tag in file order (the bytes of
-	// "hhea" as they read); without a buffer the length from the offset. The whole file (table 0) is not handed out: GDI_ERROR, as for a
-	// table the font does not have.
+	// "hhea" as they read); without a buffer the length from the offset. Table 0 is the whole file. 'ttcf' is the whole file too when
+	// it is a TrueType collection, and GDI_ERROR otherwise, so a program asks for the collection first and the single font after it,
+	// as PDF renderers do to embed the system font they substitute.
 	registry.add("GetFontData", 5, [=, this](ApiCall &call) {
 		guarded(call, 0xffffffffU, [&] {
 			auto &dc = require_dc(call, 0);
 			const uint32_t tag = call.u32(1);
-			const auto table = tag ? objects.text().logical_table(selected_font(dc).definition, __builtin_bswap32(tag)) : std::vector<uint8_t>{};
+			std::vector<uint8_t> table;
+			if (tag == 0 || tag == 0x66637474U) {
+				bool collection = false;
+				table = objects.text().logical_file(selected_font(dc).definition, collection);
+				if (tag && !collection)
+					table.clear();
+			} else
+				table = objects.text().logical_table(selected_font(dc).definition, __builtin_bswap32(tag));
 			const uint32_t offset = call.u32(2);
 			if (table.empty() || offset > table.size()) {
 				call.fail(1, 0xffffffffU);
@@ -852,20 +864,22 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.ret(1);
 		});
 	});
-	// Glyph indices are the UTF-16 units themselves: a font's glyph for a character is named by the character, which ExtTextOutW with
-	// ETO_GLYPH_INDEX draws and the glyph measurements below measure.
+	// Glyph indices are those of the selected face's font file, the ones a program finds in the file GetFontData hands out; ExtTextOutW
+	// with ETO_GLYPH_INDEX draws them and the glyph measurements below measure them. GGI_MARK_NONEXISTING_GLYPHS marks a character the
+	// face lacks as 0xffff.
 	for (const bool narrow : {false, true})
 		registry.add(narrow ? "GetGlyphIndicesA" : "GetGlyphIndicesW", 5, [=, this](ApiCall &call) {
 			guarded(call, 0xffffffffU, [&] {
-				require_dc(call, 0);
+				auto &dc = require_dc(call, 0);
 				const int32_t count = call.i32(2);
 				if (count < 0 || !call[1] || !call[3])
 					throw uint32_t(87);
 				const auto text = widen(call, call[1], count, narrow);
-				std::vector<uint8_t> bytes(text.size() * 2);
-				std::memcpy(bytes.data(), text.data(), bytes.size());
+				const auto indices = objects.text().glyph_indices(selected_font(dc).definition, to_units(text), (call.u32(4) & 1) != 0);
+				std::vector<uint8_t> bytes(indices.size() * 2);
+				std::memcpy(bytes.data(), indices.data(), bytes.size());
 				call.write(call[3], bytes);
-				call.ret(uint32_t(text.size()));
+				call.ret(uint32_t(indices.size()));
 			});
 		});
 	// The fonts here are laid out one glyph per character, left to right, without kerning or shaping, so no font needs anything
@@ -900,6 +914,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 					const uint64_t out = pointer(0), order = pointer(1), dx = pointer(2), caret = pointer(3), glyphs = pointer(5);
 					const uint64_t glyph_count = results + first + 6 * width;
 					const size_t set = std::min<size_t>(text.size(), call.load<uint32_t>(glyph_count));
+					const auto indices = glyphs ? objects.text().glyph_indices(font.definition, to_units(text), false) : std::vector<uint16_t>();
 					for (size_t index = 0; index < set; ++index) {
 						const int32_t before = index ? cumulative[index - 1] : 0;
 						if (out) {
@@ -915,7 +930,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 						if (caret)
 							call.store<int32_t>(caret + index * 4, before);
 						if (glyphs)
-							call.store<uint16_t>(glyphs + index * 2, uint16_t(text[index]));
+							call.store<uint16_t>(glyphs + index * 2, indices[index]);
 					}
 					int32_t fit = int32_t(set);
 					if (call.u32(5) & 0x100000U)
@@ -941,7 +956,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 					throw uint32_t(87);
 				for (uint32_t index = 0; index < count; ++index) {
 					const uint16_t unit = call[3] ? call.load<uint16_t>(call[3] + uint64_t(index) * 2) : uint16_t(first + index);
-					const auto advance = measured_advances(font.definition, std::span<const uint16_t>(&unit, 1));
+					const auto advance = objects.text().glyph_advances(font.definition, std::span<const uint16_t>(&unit, 1));
 					const int32_t width = advance.empty() ? 0 : advance[0];
 					if (abc) {
 						const uint64_t at = call[4] + uint64_t(index) * 12;
@@ -1390,8 +1405,8 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		}
 		return cache ? objects.font(call.load_pointer(cache)) : nullptr;
 	};
-	const auto glyph_advances = [=](const DesktopFont &font, const std::u16string &text) {
-		const auto cumulative = measured_advances(font.definition, to_units(text));
+	const auto glyph_advances = [=, this](const DesktopFont &font, const std::u16string &text) {
+		const auto cumulative = objects.text().glyph_advances(font.definition, to_units(text));
 		std::vector<int32_t> advances(text.size());
 		for (size_t index = 0; index < text.size() && index < cumulative.size(); ++index)
 			advances[index] = cumulative[index] - (index ? cumulative[index - 1] : 0);
@@ -1458,7 +1473,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		call.ret(0);
 	});
 	// ScriptShape(dc, cache, text, count, glyph capacity, analysis, glyphs, clusters, visual attributes, glyph count).
-	registry.add("ScriptShape", 10, [=](ApiCall &call) {
+	registry.add("ScriptShape", 10, [=, this](ApiCall &call) {
 		const int32_t count = call.i32(3), capacity = call.i32(4);
 		if (!call[2] || count <= 0 || !call[6] || !call[7] || !call[8] || !call[9]) {
 			call.ret(0x80070057U);
@@ -1473,6 +1488,11 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			return;
 		}
 		const auto text = call.read(call[2], size_t(count) * 2);
+		std::vector<uint16_t> characters(static_cast<size_t>(count));
+		std::memcpy(characters.data(), text.data(), text.size());
+		const auto indices = objects.text().glyph_indices(cached_font(call, call[0], call[1])->definition, characters, false);
+		std::vector<uint8_t> glyphs(size_t(count) * 2);
+		std::memcpy(glyphs.data(), indices.data(), glyphs.size());
 		std::vector<uint8_t> clusters(size_t(count) * 2), attributes(size_t(count) * 2);
 		for (int32_t index = 0; index < count; ++index) {
 			clusters[size_t(index) * 2] = uint8_t(index);
@@ -1481,7 +1501,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			const char16_t character = char16_t(text[size_t(index) * 2] | text[size_t(index) * 2 + 1] << 8);
 			attributes[size_t(index) * 2] = uint8_t(0x10 | (character == u' ' ? 4 : 2));
 		}
-		call.write(call[6], text);
+		call.write(call[6], glyphs);
 		call.write(call[7], clusters);
 		call.write(call[8], attributes);
 		call.store<int32_t>(call[9], count);
@@ -1563,7 +1583,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		std::optional<DesktopRect> rect;
 		if (call[5])
 			rect = DesktopRect{call.load<int32_t>(call[5]), call.load<int32_t>(call[5] + 4), call.load<int32_t>(call[5] + 8), call.load<int32_t>(call[5] + 12)};
-		draw_run(*dc, call.i32(2), call.i32(3), call.u32(4) & 6, rect ? &*rect : nullptr, text, deltas);
+		draw_run(*dc, call.i32(2), call.i32(3), call.u32(4) & 6, rect ? &*rect : nullptr, text, deltas, true);
 		call.ret(0);
 	});
 	// ScriptCPtoX(position, trailing, characters, glyphs, clusters, visual attributes, advances, analysis, x).

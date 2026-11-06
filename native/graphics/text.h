@@ -41,6 +41,18 @@ public:
 	// One table of the face a logical font uses, as GetFontData hands it out (tag in the file's byte order, 'OS/2' is 0x4f532f32);
 	// empty when the face has no such table.
 	std::vector<uint8_t> logical_table(std::span<const uint8_t,92> definition,uint32_t tag);
+	// The whole font file of that face, as GetFontData hands out table 0, and whether it is a TrueType collection ('ttcf'), which
+	// GetFontData hands out under that tag instead; empty when the face has no file.
+	std::vector<uint8_t> logical_file(std::span<const uint8_t,92> definition,bool &collection);
+	// Glyph indices as Windows names them: the glyphs of the one face a logical font uses, as its font file numbers them, so the
+	// indices a program reads from the file GetFontData hands out and the ones GetGlyphIndices answers agree. A character the face has
+	// no glyph for is glyph 0, or 0xffff when marked. The procedural symbol faces name their glyphs by character.
+	std::vector<uint16_t> glyph_indices(std::span<const uint8_t,92> definition,std::span<const uint16_t> text,bool mark_missing);
+	// Cumulative pixel advance after each glyph index of that face.
+	std::vector<int32_t> glyph_advances(std::span<const uint8_t,92> definition,std::span<const uint16_t> glyphs);
+	// The glyphs drawn as render draws text: coverage of the box, the first glyph at origin, offsets placing each one when given.
+	std::vector<uint8_t> render_glyphs(std::span<const uint8_t,92> definition,std::span<const uint16_t> glyphs,
+		uint32_t width,uint32_t height,int32_t origin_x,int32_t origin_y,std::span<const int32_t> offsets={});
 	// The design units per em of that face, from its head table; 0 for the symbol face that has none.
 	uint32_t logical_units_per_em(std::span<const uint8_t,92> definition);
 	// Cumulative pixel advance after each UTF-16 unit; control characters advance by zero.
