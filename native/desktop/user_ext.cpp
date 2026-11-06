@@ -919,6 +919,53 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	});
 
 	// ---- scrolling the client area ----
+	// ScrollDC(dc, dx, dy, scroll rectangle, clip rectangle, update region, update rectangle): the bits of the scroll rectangle (the
+	// whole surface without one) move by dx, dy, landing only inside the clip rectangle; nothing is invalidated. What the move
+	// uncovered inside the clip rectangle is the update region and, as its bounds, the update rectangle.
+	registry.add("ScrollDC", 7, [this](ApiCall &call) {
+		auto *dc = objects.dc(call[0]);
+		if (!dc) {
+			call.fail(6);
+			return;
+		}
+		const int32_t dx = call.i32(1), dy = call.i32(2);
+		Rect area{0, 0, 0, 0};
+		if (call[3]) {
+			area = read_rect(call, call[3]);
+		} else if (const auto *window = std::as_const(objects).window(dc->window)) {
+			area = {0, 0, window->width, window->height};
+		} else if (const auto *bitmap = objects.bitmap(dc->bitmap)) {
+			area = {0, 0, int32_t(bitmap->width), int32_t(bitmap->height)};
+		}
+		Rect clip = area;
+		if (call[4]) {
+			const auto given = read_rect(call, call[4]);
+			clip = {std::max(area.left, given.left), std::max(area.top, given.top), std::min(area.right, given.right), std::min(area.bottom, given.bottom)};
+		}
+		DesktopRegion uncovered;
+		if (clip.right > clip.left && clip.bottom > clip.top) {
+			uncovered.add({clip.left, clip.top, clip.right, clip.bottom});
+			const Rect target{std::max(clip.left, area.left + dx), std::max(clip.top, area.top + dy),
+				std::min(clip.right, area.right + dx), std::min(clip.bottom, area.bottom + dy)};
+			if (target.right > target.left && target.bottom > target.top) {
+				if (dx || dy)
+					blit(objects, *dc, target.left, target.top, target.right - target.left, target.bottom - target.top, dc,
+						target.left - dx, target.top - dy, target.right - target.left, target.bottom - target.top, 0x00cc0020);
+				uncovered.subtract({target.left, target.top, target.right, target.bottom});
+			}
+			if (dc->window && (dx || dy))
+				drawing(dc->window);
+		}
+		if (call[5] && !objects.replace_region(call[5], uncovered)) {
+			call.fail(6);
+			return;
+		}
+		if (call[6]) {
+			const auto box = uncovered.empty() ? DesktopRect{0, 0, 0, 0} : uncovered.bounds();
+			write_rect(call, call[6], {box.left, box.top, box.right, box.bottom});
+		}
+		call.ret(1);
+	});
 	registry.add("ScrollWindowEx", 8, [this](ApiCall &call) {
 		auto *window = objects.window(call[0]);
 		if (!window) {
