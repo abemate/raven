@@ -756,7 +756,8 @@ NativeWindows::PaintStart NativeWindows::start_paint(uint64_t handle)
 	const auto rect=objects.dc(dc)->clip->bounds();
 	if (std::getenv("RAVEN_TRACE_PAINT")) {
 		const auto *device=objects.dc(dc);
-		std::cerr << "start " << std::hex << handle << std::dec << " clip " << rect.left << ',' << rect.top << ',' << rect.right << ',' << rect.bottom;
+		const auto *painted=std::as_const(objects).window(handle);
+		std::cerr << "start " << std::hex << handle << std::dec << " size " << painted->width << ',' << painted->height << " clip " << rect.left << ',' << rect.top << ',' << rect.right << ',' << rect.bottom;
 		if (device->bounds) std::cerr << " bounds " << device->bounds->left << ',' << device->bounds->top << ',' << device->bounds->right << ',' << device->bounds->bottom;
 		if (device->visible) { const auto box = device->visible->bounds(); std::cerr << " visible " << box.left << ',' << box.top << ',' << box.right << ',' << box.bottom; }
 		std::cerr << " erase " << erase << '\n';

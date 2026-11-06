@@ -1234,7 +1234,7 @@ std::string NativeProcess::describe_address(uint64_t address) const
 {
 	std::ostringstream text;
 	text << std::hex;
-	const std::pair<uint64_t, uint64_t> *below = nullptr;
+	const std::pair<uint64_t, uint64_t> *below = nullptr, *above = nullptr;
 	for (const auto &allocation : state->allocations) {
 		if (address >= allocation.first && address < allocation.first + allocation.second) {
 			text << "inside mapping " << allocation.first << "+" << allocation.second << " at offset " << address - allocation.first;
@@ -1245,6 +1245,8 @@ std::string NativeProcess::describe_address(uint64_t address) const
 		}
 		if (allocation.first <= address && (!below || allocation.first > below->first))
 			below = &allocation;
+		if (allocation.first > address && (!above || allocation.first < above->first))
+			above = &allocation;
 	}
 	if (below)
 	{
@@ -1253,10 +1255,17 @@ std::string NativeProcess::describe_address(uint64_t address) const
 			if (const auto owner = mapping_owner(below->first); !owner.empty())
 				text << " (" << owner << ")";
 	}
+	// The mapping that starts next: an address computed from an index before the start of a buffer lands just below it.
+	if (above) {
+		text << (below ? "; " : "") << "before mapping " << above->first << "+" << above->second << " by " << above->first - address;
+		if (mapping_owner)
+			if (const auto owner = mapping_owner(above->first); !owner.empty())
+				text << " (" << owner << ")";
+	}
 	const auto now = std::chrono::steady_clock::now();
 	for (auto entry = state->released.rbegin(); entry != state->released.rend(); ++entry)
 		if (address >= entry->address && address < entry->address + entry->size) {
-			text << (below ? "; " : "") << "in mapping " << entry->address << "+" << entry->size << " released "
+			text << (below || above ? "; " : "") << "in mapping " << entry->address << "+" << entry->size << " released "
 				<< std::dec << std::chrono::duration_cast<std::chrono::milliseconds>(now - entry->when).count() << " ms ago" << std::hex;
 			break;
 		}
