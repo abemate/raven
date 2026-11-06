@@ -160,6 +160,15 @@ struct WaylandPresentation::State {
 	// Pointer buttons held down, and a window whose move the window menu asked for while none was: the compositor starts a move only
 	// from a press, so the move begins with the next press on that window, as a click ends the move on Windows; a key cancels it.
 	uint32_t buttons_down=0;
+	// The buttons whose press reached the program and whose release has not: a drag the compositor takes over (a move or resize)
+	// keeps the release for itself, so these are let go when the pointer leaves or the drag is handed over, or the program would
+	// take the next press for a button still held.
+	std::vector<uint32_t> held;
+	void release_held() {
+		for (const auto button : held) pointer_event(DesktopEventKind::pointer_button,button,0);
+		held.clear();
+		buttons_down=0;
+	}
 	uint64_t pending_move=0;
 	const char *input_error="unsupported native input event or input queue exhaustion";
 	std::vector<DesktopEvent> pending;
@@ -350,7 +359,7 @@ struct WaylandPresentation::State {
 					state.pointer_x=coordinate(x); state.pointer_y=coordinate(y); state.pointer_event(DesktopEventKind::pointer_motion);
 				};
 				value.leave=[](void *data,wl_pointer *,uint32_t,wl_surface *) {
-					auto &state=*static_cast<State *>(data); state.pointer_window=0; state.pointer_inside=false;
+					auto &state=*static_cast<State *>(data); state.release_held(); state.pointer_window=0; state.pointer_inside=false;
 				};
 				value.motion=[](void *data,wl_pointer *,uint32_t,wl_fixed_t x,wl_fixed_t y) {
 					auto &state=*static_cast<State *>(data); state.pointer_x=coordinate(x); state.pointer_y=coordinate(y);
@@ -371,6 +380,8 @@ struct WaylandPresentation::State {
 							return;
 						}
 					}
+					if (pressed) { if (std::find(state.held.begin(),state.held.end(),button)==state.held.end()) state.held.push_back(button); }
+					else std::erase(state.held,button);
 					state.pointer_event(DesktopEventKind::pointer_button,button,pressed);
 				};
 				value.axis=[](void *data,wl_pointer *,uint32_t,uint32_t axis,wl_fixed_t amount) {
@@ -1146,11 +1157,20 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 		const auto found=state->surfaces.find(handle);
 		if (found==state->surfaces.end() || !state->seat || found->second->is_popup || !found->second->role) return;
 		// A click on the caption that is already over moves nothing; the next press must not become a move.
-		if (action==11 && !state->buttons_down) return;
+		// A drag on the frame the user already let go of starts nothing: the compositor would begin a move or resize that only the
+		// next click ends, and that click would be lost. Only the window menu's Move (action 0) waits for the next press.
+		if (!state->buttons_down) {
+			if (action==0) state->pending_move=handle;
+			wl_display_flush(state->display);
+			return;
+		}
 		if (action==11) action=0;
-		if (action==0 && !state->buttons_down) state->pending_move=handle;
-		else if (action==0) xdg_toplevel_move(found->second->role,state->seat,state->last_serial);
-		else xdg_toplevel_resize(found->second->role,state->seat,state->last_serial,action);
+		{
+			if (action==0) xdg_toplevel_move(found->second->role,state->seat,state->press_serial);
+			else xdg_toplevel_resize(found->second->role,state->seat,state->press_serial,action);
+			// The compositor keeps the release that ends the drag; the program sees the button go up now.
+			state->release_held();
+		}
 		wl_display_flush(state->display);
 	},[this](std::string_view text) { state->publish_text(text); },
 	[this]() { return state->fetch_text(); },
