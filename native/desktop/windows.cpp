@@ -1141,14 +1141,20 @@ void NativeWindows::receive(const DesktopEvent &event)
 		return;
 	}
 	if (event.kind==DesktopEventKind::pointer_wheel) {
-		// The wheel goes to the focus window with the screen position of the pointer.
+		// The wheel goes to the window under the pointer, as with Windows 10's default of scrolling the window hovered over: the file
+		// list of a dialog scrolls while the focus stays in its name box. The window holding the capture gets it instead, and a
+		// disabled window leaves it to the focus window. The position is the pointer's on the screen.
 		const auto *source=std::as_const(objects).window(event.window);
-		if (!source || !focus || !std::as_const(objects).window(focus) || messages.size()>=10000) return;
+		if (!source || messages.size()>=10000) return;
 		const auto x=int64_t(source->outer.left)+event.x,y=int64_t(source->outer.top)+event.y;
 		if (x<INT16_MIN || x>INT16_MAX || y<INT16_MIN || y>INT16_MAX) return;
+		uint64_t target=capture && std::as_const(objects).window(capture) ? capture : pointer_child(event.window,int32_t(x),int32_t(y));
+		if (const auto *under=std::as_const(objects).window(target); !under || (under->style & 0x08000000U) || !objects.window_visible(target))
+			target=focus;
+		if (!target || !std::as_const(objects).window(target)) return;
 		const auto delta=uint64_t(uint16_t(int16_t(int32_t(event.message))));
 		if (raw_mouse.registered) raw_mouse_input(0,0,event.wparam ? 0x800 : 0x400,int16_t(int32_t(event.message)));
-		queue({focus,(delta<<16)|mouse_buttons|keyboard_map.mouse_modifiers(),uint16_t(x)|(uint64_t(uint16_t(y))<<16),event.wparam ? 0x20eU : 0x20aU,message_time(),int32_t(x),int32_t(y)},4);
+		queue({target,(delta<<16)|mouse_buttons|keyboard_map.mouse_modifiers(),uint16_t(x)|(uint64_t(uint16_t(y))<<16),event.wparam ? 0x20eU : 0x20aU,message_time(),int32_t(x),int32_t(y)},4);
 		return;
 	}
 	if (event.x<INT16_MIN || event.x>INT16_MAX || event.y<INT16_MIN || event.y>INT16_MAX)
@@ -1699,6 +1705,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	if (!window) throw uint32_t(1400);
 	const auto message=uint32_t(args[1]);
 	if (message==0x200 || message==0x201 || message==0x202 || message==0x204 || message==0x207 || message==0x208) return 0;
+	// A child that does not scroll passes the wheel up to its parent, as Windows' default procedure does: a list that ignores it lets
+	// the pane holding it scroll.
+	if (message==0x20a || message==0x20e) {
+		if ((window->style & 0x40000000U) && window->parent) return send(window->parent,message,args[2],args[3]);
+		return 0;
+	}
 	// A child that does not answer passes the menu request up to its parent.
 	if (message==0x7b) {
 		if ((window->style & 0x40000000U) && window->parent) send(window->parent,0x7b,args[2],args[3]);
