@@ -109,9 +109,8 @@ struct WaylandPresentation::State {
 		std::chrono::steady_clock::time_point maximize_requested{};
 		uint32_t width=0,height=0,pending_width=0,pending_height=0;
 		std::vector<std::unique_ptr<Buffer>> buffers;
-		// The buffer of the last commit, whose pixels are what the compositor shows, and the hash of each of its rows.
+		// The buffer of the last commit, whose pixels are what the compositor shows.
 		Buffer *shown=nullptr;
-		std::vector<uint64_t> row_hashes;
 		// Tells this surface from one made later for the same window, which surfaces stacked over it must be attached to again.
 		static inline uint64_t made=0;
 		const uint64_t serial=++made;
@@ -687,36 +686,15 @@ struct WaylandPresentation::State {
 		if (!compositor || !shm || !shell) throw std::runtime_error("Wayland compositor lacks required presentation protocols");
 	}
 
-	// The rectangle of a frame that differs from the one shown, empty when they match.
-	// A row's 64-bit hash in four independent lanes, so that a frame is read at the speed of memory.
-	static uint64_t row_hash(const uint8_t *row,size_t length) {
-		constexpr uint64_t factor=0x9e3779b97f4a7c15ULL;
-		uint64_t lanes[4]={1,2,3,4};
-		size_t at=0;
-		for (;at+32<=length;at+=32)
-			for (int lane=0;lane<4;++lane) {
-				uint64_t word=0;
-				std::memcpy(&word,row+at+size_t(lane)*8,8);
-				lanes[lane]=(lanes[lane]^word)*factor;
-			}
-		for (;at<length;++at) lanes[0]=(lanes[0]^row[at])*factor;
-		return lanes[0]^(lanes[1]<<1)^(lanes[2]<<2)^(lanes[3]<<3)^length;
-	}
-
-	// The rectangle of a frame that differs from the one shown, empty when they match. The rows whose hash changed since the shown
-	// frame are the only ones compared, so the shown frame is read only where something changed; the hashes then describe the new frame.
-	static std::array<int32_t,4> changed_area(Surface &window,const Buffer &shown,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) {
+	// The rectangle of a frame that differs from the one shown, empty when they match. Each row is compared with the shown frame
+	// directly: a changed row differs within its first bytes, and an unchanged one is read at the speed of memory, faster than
+	// hashing it (a scrolled page changes every row, and hashing them cost more than the comparison).
+	static std::array<int32_t,4> changed_area(const Buffer &shown,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) {
 		const size_t stride=size_t(width)*4;
 		const auto *old=static_cast<const uint8_t *>(shown.pixels);
-		const bool known=window.row_hashes.size()==height;
-		window.row_hashes.resize(height);
 		uint32_t top=height,bottom=0,left=width,right=0;
 		for (uint32_t y=0;y<height;++y) {
 			const auto *row=pixels.data()+y*stride;
-			const auto hash=row_hash(row,stride);
-			const bool same=known && window.row_hashes[y]==hash;
-			window.row_hashes[y]=hash;
-			if (same) continue;
 			const auto *previous=old+y*stride;
 			if (!std::memcmp(previous,row,stride)) continue;
 			top=std::min(top,y); bottom=y+1;
@@ -736,10 +714,8 @@ struct WaylandPresentation::State {
 		// Released buffers of this size are reused; the compositor only repaints what changed since the shown frame.
 		std::array<int32_t,4> damage{0,0,int32_t(width),int32_t(height)};
 		const bool same_size=window.shown && window.shown->width==width && window.shown->height==height;
-		// Hashes describe the shown frame only after a comparison made them; a frame presented whole leaves none.
-		if (!same_size) window.row_hashes.clear();
 		if (same_size) {
-			damage=changed_area(window,*window.shown,width,height,pixels);
+			damage=changed_area(*window.shown,width,height,pixels);
 			if (!damage[2]) {
 				wl_surface_commit(window.proxy);
 				return;
