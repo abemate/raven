@@ -40,7 +40,7 @@ def environment():
     return {"PATH": "/usr/bin:/bin", "XDG_RUNTIME_DIR": str(RUNTIME), "WAYLAND_DISPLAY": "wayland-0"}
 
 
-def start_compositor(log):
+def start_compositor(log, size="1600x1000"):
     """Start a headless labwc that never touches the user's own session."""
     if (RUNTIME / "wayland-0").exists():
         probe = subprocess.run(["wlrctl", "toplevel", "list"], env=environment(), capture_output=True, timeout=10)
@@ -54,7 +54,7 @@ def start_compositor(log):
     for _ in range(50):
         if (RUNTIME / "wayland-0").exists():
             time.sleep(0.5)
-            subprocess.run(["wlr-randr", "--output", "HEADLESS-1", "--custom-mode", "1600x1000"], env=environment(),
+            subprocess.run(["wlr-randr", "--output", "HEADLESS-1", "--custom-mode", size], env=environment(),
                            capture_output=True, timeout=10)
             return process
         time.sleep(0.1)
@@ -199,6 +199,7 @@ def main():
     parser.add_argument("--x11", action="store_true")
     parser.add_argument("--pdf", type=Path, help="open this file (as raven-test.pdf) instead of the generated test document")
     parser.add_argument("--keep-files", action="store_true", help="keep the copy of the program directory after the run")
+    parser.add_argument("--size", default="1600x1000", help="the headless screen, as WIDTHxHEIGHT")
     parser.add_argument("--wait", type=int, default=300, help="seconds to wait for the main window")
     parser.add_argument("--keep-open", type=int, default=0, help="seconds to keep the program running at the end")
     args = parser.parse_args()
@@ -224,7 +225,7 @@ def workflow(args):
         subprocess.run([sys.executable, str(REPO / "testdata/pdfx/make-test-pdf.py"), str(pdf), "5"], check=True)
     stage = STAGES.index(args.stage)
 
-    compositor = None if x11 else start_compositor((evidence / "compositor.log").open("wb"))
+    compositor = None if x11 else start_compositor((evidence / "compositor.log").open("wb"), args.size)
     log = (evidence / "raven.log").open("wb")
     env = environment() | {"RAVEN_PREFIX": str(prefix)}
     env |= {name: value for name, value in os.environ.items() if name.startswith("RAVEN_") and name != "RAVEN_PREFIX"}
