@@ -280,6 +280,22 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	registry.add("GetMessagePos", 0, [this](ApiCall &call) { call.ret(uint32_t(uint16_t(cursor_x)) | (uint32_t(uint16_t(cursor_y)) << 16)); });
 	registry.add("mouse_event", 5, [](ApiCall &call) { call.ret(0); });
 	registry.add("DragDetect", 3, [](ApiCall &call) { call.ret(0); });
+	// The shell component's DoDragDrop carries a drag out of the program's windows to the desktop: RavenDragStart(paths) offers the files
+	// (a list of names each ended by a null, then a second null) to be copied and answers whether the drag left; RavenDragPoll() then
+	// says how it goes (see DesktopPresentation::drag_out_state).
+	registry.add("RavenDragStart", 1, [this](ApiCall &call) {
+		std::vector<std::u16string> names;
+		for (uint64_t at = call[0]; at && names.size() < 4096;) {
+			auto name = call.wide(at, 32768);
+			if (name.empty())
+				break;
+			at += (name.size() + 1) * 2;
+			names.push_back(std::move(name));
+		}
+		const auto uris = drag_uris && !names.empty() ? drag_uris(names) : std::string();
+		call.ret(!uris.empty() && presentation.drag_out && presentation.drag_out(uris) ? 1 : 0);
+	});
+	registry.add("RavenDragPoll", 0, [this](ApiCall &call) { call.ret(presentation.drag_out_state ? presentation.drag_out_state() : 2); });
 	registry.add("SetWindowContextHelpId", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("SubtractRect", 3, [](ApiCall &call) {
 		const auto minuend = read_rect(call, call[1]), subtrahend = read_rect(call, call[2]);

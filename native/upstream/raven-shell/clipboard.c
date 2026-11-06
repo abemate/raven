@@ -110,6 +110,13 @@ static HRESULT WINAPI formats_Clone(IEnumFORMATETC *iface, IEnumFORMATETC **out)
 static const IEnumFORMATETCVtbl format_vtbl = {formats_QueryInterface, formats_AddRef, formats_Release, formats_Next, formats_Skip,
 	formats_Reset, formats_Clone};
 
+/* An enumerator over a copy of the formats given, for the other data objects of the component (the files a drop carries). */
+IEnumFORMATETC *raven_format_enumerator(const FORMATETC *formats, ULONG count)
+{
+	format_list *list = new_format_list(formats, count, 0);
+	return list ? &list->iface : NULL;
+}
+
 /* --- The data object. --- */
 
 #define CLIPBOARD_CANT_OPEN ((HRESULT)0x800401d0)

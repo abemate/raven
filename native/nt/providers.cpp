@@ -2778,6 +2778,48 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
 	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
 	windows.set_global_data([&allocator](uint64_t handle) { return allocator.data(handle); });
+	windows.set_drag_uris([&paths](const std::vector<std::u16string> &names) {
+		std::string list;
+		for (const auto &name : names) {
+			const auto found = paths.resolve(name);
+			if (!found || !found->exists) continue;
+			std::string uri = "file://";
+			for (const unsigned char c : found->host.string()) {
+				if (std::isalnum(c) || c == '/' || c == '-' || c == '_' || c == '.' || c == '~') uri.push_back(char(c));
+				else { static const char hex[] = "0123456789ABCDEF"; uri.push_back('%'); uri.push_back(hex[c >> 4]); uri.push_back(hex[c & 15]); }
+			}
+			list += uri + "\r\n";
+		}
+		return list;
+	});
+	// A text/uri-list of files dragged in from the desktop: each file:// line, its escapes decoded, as the program's path of that file.
+	windows.set_drop_paths([&paths](std::string_view list) {
+		std::vector<std::u16string> result;
+		const auto digit=[](char c) { return c>='0' && c<='9' ? c-'0' : c>='a' && c<='f' ? c-'a'+10 : c>='A' && c<='F' ? c-'A'+10 : -1; };
+		size_t start=0;
+		while (start<list.size() && result.size()<4096) {
+			auto end=list.find('\n',start);
+			if (end==list.npos) end=list.size();
+			auto line=list.substr(start,end-start);
+			start=end+1;
+			while (!line.empty() && (line.back()=='\r' || line.back()==' ')) line.remove_suffix(1);
+			if (!line.starts_with("file://")) continue;
+			line.remove_prefix(7);
+			// file://host/path names the host first; only this machine's files are reachable.
+			const auto slash=line.find('/');
+			if (slash==line.npos) continue;
+			line.remove_prefix(slash);
+			std::string path;
+			for (size_t at=0;at<line.size();++at) {
+				if (line[at]=='%' && at+2<line.size() && digit(line[at+1])>=0 && digit(line[at+2])>=0) {
+					path.push_back(char(digit(line[at+1])*16+digit(line[at+2])));
+					at+=2;
+				} else path.push_back(line[at]);
+			}
+			if (!path.empty()) result.push_back(paths.dos(path));
+		}
+		return result;
+	});
 	kernel.queue_status=[&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
 	kernel.queue_quiet=[&windows](uint32_t thread) { windows.mark_quiet(thread); };
 	windows.set_block([&threads](std::function<bool()> ready) {

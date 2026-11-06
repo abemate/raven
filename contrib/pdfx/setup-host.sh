@@ -22,7 +22,7 @@ cd "$repo"
 [[ -f $zip ]] || { echo "PDF-XChange portable zip not found: $zip" >&2; exit 1; }
 [[ -f scripts/provision-installer.py && -f contrib/pdfx/pdfx ]] || { echo "run this from the pdfx-work checkout" >&2; exit 1; }
 
-# The components the branch needs that an older provisioning lacks: the script hosts of the installer set, and OleRun in the shell.
+# The components the branch needs that an older provisioning lacks: the script hosts of the installer set, and the drop calls (DragQueryFileW) in the shell.
 if [[ ! -f $installer/scrrun.dll || ! -f $installer/wshom.ocx ]]; then
     step "Building the 64-bit installer components (a few minutes)"
     python3 scripts/provision-installer.py --output "$installer"
@@ -31,7 +31,7 @@ if [[ ! -f $installer32/scrrun.dll || ! -f $installer32/wshom.ocx ]]; then
     step "Building the 32-bit installer components (a few minutes)"
     python3 scripts/provision-installer.py --arch x86 --output "$installer32"
 fi
-if ! exports "$controls/raven-shell.dll" | grep -qw OleRun || ! exports "$controls32/raven-shell.dll" | grep -qw OleRun; then
+if ! exports "$controls/raven-shell.dll" | grep -qw DragQueryFileW || ! exports "$controls32/raven-shell.dll" | grep -qw DragQueryFileW; then
     step "Rebuilding the shell component"
     python3 scripts/provision-controls.py --components shell --output "$controls" >/dev/null
     python3 scripts/provision-controls.py --arch x86 --components shell --output "$controls32" >/dev/null

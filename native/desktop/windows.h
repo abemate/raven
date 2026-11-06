@@ -56,6 +56,10 @@ public:
 	void set_global_allocator(std::function<uint64_t(uint64_t)> allocator) { global_allocator = std::move(allocator); }
 	// The bytes a global memory handle stands for: a movable block's handle stays fixed while its data moves.
 	void set_global_data(std::function<uint64_t(uint64_t)> data) { global_data = std::move(data); }
+	// The program's paths of the files a text/uri-list names, for files dragged in from the desktop.
+	void set_drop_paths(std::function<std::vector<std::u16string>(std::string_view)> paths) { drop_paths = std::move(paths); }
+	// The text/uri-list of the program's files, for a drag out to the desktop.
+	void set_drag_uris(std::function<std::string(const std::vector<std::u16string> &)> uris) { drag_uris = std::move(uris); }
 	void set_menu_loader(std::function<uint64_t(uint64_t,uint64_t)> loader) { menu_loader = std::move(loader); }
 	bool dispatch(std::string_view name);
 	// The served block where the screen context the guest's GetDC(NULL) takes is published (see the screen preludes), and the
@@ -444,6 +448,11 @@ private:
 	uint32_t clipboard_published=0;
 	uint64_t host_selection=0;
 	std::function<uint64_t(uint64_t)> global_allocator, global_data;
+	std::function<std::vector<std::u16string>(std::string_view)> drop_paths;
+	std::function<std::string(const std::vector<std::u16string> &)> drag_uris;
+	// A drag of files from the desktop: the broker window (see raven-shell dragdrop.c) of the thread that plays it to its drop targets.
+	uint64_t drop_broker = 0;
+	void receive_drag(const DesktopEvent &event);
 	std::array<uint8_t,256> vk_state{},vk_async{};
 	// The mouse buttons count as keys too (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1 and 2), from the MK_ flags of a pointer message.
 	static void mouse_keys(std::array<uint8_t,256> &state,uint64_t buttons)

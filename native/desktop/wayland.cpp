@@ -156,6 +156,13 @@ struct WaylandPresentation::State {
 	bool input_failed=false;
 	// Serial of the newest input event, and of the newest button or key press: a compositor grants a popup grab only for a press.
 	uint32_t last_serial=0,press_serial=0;
+	// The newest pointer button press and the window it was on, which a drag out to the desktop starts from.
+	uint32_t button_serial=0;
+	uint64_t button_window=0;
+	// A drag of files out to the desktop: its source, the text/uri-list it offers and how it went (see DesktopPresentation::drag_out).
+	wl_data_source *out_source=nullptr;
+	std::string out_uris;
+	uint32_t out_state=2;
 	// Pointer buttons held down, and a window whose move the window menu asked for while none was: the compositor starts a move only
 	// from a press, so the move begins with the next press on that window, as a click ends the move on Windows; a key cancels it.
 	uint32_t buttons_down=0;
@@ -179,6 +186,12 @@ struct WaylandPresentation::State {
 	std::map<wl_data_offer *,std::set<std::string>> offer_mimes;
 	wl_data_offer *selection_offer=nullptr;
 	wl_data_offer *drag_offer=nullptr;
+	// The drag over the program's windows: the serial of its arrival, which an answer quotes, the window it is over, whether it carries
+	// files the program was told of, whether the program takes it, the action the compositor settled on and whether it was dropped.
+	uint32_t drag_serial=0,drag_action=0;
+	uint64_t drag_window=0;
+	int32_t drag_x=0,drag_y=0;
+	bool drag_files=false,drag_accepted=false,drag_dropped=false;
 	uint64_t selection_counter=0;
 	std::map<uint64_t,std::unique_ptr<Surface>> surfaces;
 	// The windows whose frames carry alpha.
@@ -238,6 +251,7 @@ struct WaylandPresentation::State {
 		outputs.clear();
 		if (output_manager) zxdg_output_manager_v1_destroy(output_manager);
 		if (data_source) wl_data_source_destroy(data_source);
+		if (out_source) wl_data_source_destroy(out_source);
 		if (selection_offer) wl_data_offer_destroy(selection_offer);
 		if (drag_offer) wl_data_offer_destroy(drag_offer);
 		if (data_device) wl_data_device_destroy(data_device);
@@ -367,7 +381,7 @@ struct WaylandPresentation::State {
 				value.button=[](void *data,wl_pointer *,uint32_t serial,uint32_t,uint32_t button,uint32_t pressed) {
 					auto &state=*static_cast<State *>(data);
 					state.last_serial=serial;
-					if (pressed) state.press_serial=serial;
+					if (pressed) { state.press_serial=serial; state.button_serial=serial; state.button_window=state.pointer_window; }
 					state.buttons_down=pressed ? state.buttons_down+1 : state.buttons_down ? state.buttons_down-1 : 0;
 					if (pressed && state.pending_move) {
 						const auto found=state.surfaces.find(state.pending_move);
@@ -463,10 +477,107 @@ struct WaylandPresentation::State {
 	static constexpr const char *text_mimes[]={"text/plain;charset=utf-8","text/plain;charset=UTF-8","UTF8_STRING","text/plain"};
 
 	void release_drag_offer() {
+		drag_window=0; drag_files=drag_accepted=drag_dropped=false; drag_action=0;
 		if (!drag_offer) return;
 		offer_mimes.erase(drag_offer);
 		wl_data_offer_destroy(drag_offer);
 		drag_offer=nullptr;
+	}
+
+	void drag_event(uint32_t stage,std::string uris={}) {
+		if (pending.size()>=10000) { input_failed=true; return; }
+		try {
+			DesktopEvent event{drag_window,stage};
+			event.kind=DesktopEventKind::drag; event.x=drag_x; event.y=drag_y; event.keymap=std::move(uris);
+			pending.push_back(std::move(event));
+		} catch (...) { input_failed=true; }
+	}
+
+	// What the window under a drag answered (see DesktopPresentation::drag_answer). The offer is taken as text/uri-list, the one form the
+	// files were read in; a drop is finished when it was taken, which tells the source the copy is done.
+	void answer_drag(uint32_t stage,uint32_t effect) {
+		if (!drag_offer || !drag_files) return;
+		if (stage==4) {
+			if (!drag_dropped) return;
+			if (wl_data_offer_get_version(drag_offer)>=3 && drag_accepted && effect && drag_action) wl_data_offer_finish(drag_offer);
+			release_drag_offer();
+			wl_display_flush(display);
+			return;
+		}
+		if (drag_dropped) return;
+		const bool accept=effect!=0;
+		if (accept==drag_accepted) return;
+		drag_accepted=accept;
+		wl_data_offer_accept(drag_offer,drag_serial,accept ? "text/uri-list" : nullptr);
+		wl_display_flush(display);
+	}
+
+	bool drag_out(std::string_view uris) {
+		if (!data_device || !data_manager || !button_serial || !buttons_down) return false;
+		const auto found=surfaces.find(button_window);
+		if (found==surfaces.end() || !found->second->proxy) return false;
+		if (out_source) { wl_data_source_destroy(out_source); out_source=nullptr; }
+		out_uris.assign(uris);
+		out_source=wl_data_device_manager_create_data_source(data_manager);
+		static const wl_data_source_listener listener{
+			[](void *,wl_data_source *,const char *) {},
+			[](void *data,wl_data_source *,const char *,int32_t descriptor) {
+				auto &state=*static_cast<State *>(data);
+				size_t done=0;
+				while (done<state.out_uris.size()) {
+					const auto wrote=write(descriptor,state.out_uris.data()+done,state.out_uris.size()-done);
+					if (wrote<=0) break;
+					done+=size_t(wrote);
+				}
+				close(descriptor);
+			},
+			// Cancelled: dropped where nothing took it, or the drag was refused.
+			[](void *data,wl_data_source *source) {
+				auto &state=*static_cast<State *>(data);
+				if (state.out_source==source) { state.out_source=nullptr; if (!state.out_state) state.out_state=2; }
+				wl_data_source_destroy(source);
+			},
+			// Dropped on a client that takes it: the program's drag is over, the source stays until the client has read the files.
+			[](void *data,wl_data_source *source) {
+				auto &state=*static_cast<State *>(data);
+				if (state.out_source==source && !state.out_state) state.out_state=1;
+			},
+			[](void *data,wl_data_source *source) {
+				auto &state=*static_cast<State *>(data);
+				if (state.out_source==source) { state.out_source=nullptr; if (!state.out_state) state.out_state=1; }
+				wl_data_source_destroy(source);
+			},
+			[](void *,wl_data_source *,uint32_t) {}};
+		wl_data_source_add_listener(out_source,&listener,this);
+		wl_data_source_offer(out_source,"text/uri-list");
+		if (wl_data_source_get_version(out_source)>=3) wl_data_source_set_actions(out_source,WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+		wl_data_device_start_drag(data_device,out_source,found->second->proxy,nullptr,button_serial);
+		out_state=0;
+		wl_display_flush(display);
+		return true;
+	}
+
+	// Reads what an offer holds in one MIME type, waiting at most two seconds for the client that offers it.
+	std::string receive_offer(wl_data_offer *offer,const char *mime) {
+		int pipes[2];
+		if (pipe2(pipes,O_CLOEXEC)<0) return {};
+		wl_data_offer_receive(offer,mime,pipes[1]);
+		close(pipes[1]);
+		wl_display_flush(display);
+		std::string text;
+		const auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+		for (;;) {
+			pollfd entry{pipes[0],POLLIN,0};
+			const auto left=std::chrono::duration_cast<std::chrono::milliseconds>(limit-std::chrono::steady_clock::now()).count();
+			if (left<=0 || ::poll(&entry,1,int(left))<=0) break;
+			char buffer[4096];
+			const auto count=read(pipes[0],buffer,sizeof buffer);
+			if (count<=0) break;
+			text.append(buffer,size_t(count));
+			if (text.size()>(16U<<20)) break;
+		}
+		close(pipes[0]);
+		return text;
 	}
 
 	void make_data_device() {
@@ -478,18 +589,56 @@ struct WaylandPresentation::State {
 				state.offer_mimes[offer].clear();
 				static const wl_data_offer_listener offers{[](void *data,wl_data_offer *offer,const char *mime) {
 					static_cast<State *>(data)->offer_mimes[offer].insert(mime);
-				},[](void *,wl_data_offer *,uint32_t) {},[](void *,wl_data_offer *,uint32_t) {}};
+				},[](void *,wl_data_offer *,uint32_t) {},[](void *data,wl_data_offer *offer,uint32_t action) {
+					auto &state=*static_cast<State *>(data);
+					if (offer==state.drag_offer) state.drag_action=action;
+				}};
 				wl_data_offer_add_listener(offer,&offers,&state);
 			},
-			// libwayland aborts on an event without a handler. Windows are no drop targets yet, so a dragged offer is only released.
-			[](void *data,wl_data_device *,uint32_t,wl_surface *,wl_fixed_t,wl_fixed_t,wl_data_offer *offer) {
+			// A drag of files from another program over one of the windows: its list of files is read as it arrives, and the program
+			// answers each step through answer_drag; any other drag is refused.
+			[](void *data,wl_data_device *,uint32_t serial,wl_surface *surface,wl_fixed_t x,wl_fixed_t y,wl_data_offer *offer) {
 				auto &state=*static_cast<State *>(data);
 				state.release_drag_offer();
 				state.drag_offer=offer;
+				state.drag_serial=serial;
+				state.drag_x=wl_fixed_to_int(x); state.drag_y=wl_fixed_to_int(y);
+				if (!offer) return;
+				for (const auto &[handle,window] : state.surfaces) if (window->proxy==surface) state.drag_window=handle;
+				const auto known=state.offer_mimes.find(offer);
+				// The program's own drag out coming back over its windows is not taken: its files would open as new documents, and reading
+				// them here would wait on this very client.
+				if (!state.drag_window || state.out_source || known==state.offer_mimes.end() || !known->second.contains("text/uri-list")) {
+					wl_data_offer_accept(offer,serial,nullptr);
+					return;
+				}
+				if (wl_data_offer_get_version(offer)>=3)
+					// Only copied: a move would have the file manager delete the original once the program has it.
+					wl_data_offer_set_actions(offer,WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+				auto uris=state.receive_offer(offer,"text/uri-list");
+				if (uris.empty()) { wl_data_offer_accept(offer,serial,nullptr); return; }
+				state.drag_files=true;
+				state.drag_event(1,std::move(uris));
 			},
-			[](void *data,wl_data_device *) { static_cast<State *>(data)->release_drag_offer(); },
-			[](void *,wl_data_device *,uint32_t,wl_fixed_t,wl_fixed_t) {},
-			[](void *data,wl_data_device *) { static_cast<State *>(data)->release_drag_offer(); },
+			[](void *data,wl_data_device *) {
+				auto &state=*static_cast<State *>(data);
+				// After a drop the offer stays until the program has taken the files.
+				if (state.drag_dropped) return;
+				if (state.drag_files) state.drag_event(3);
+				state.release_drag_offer();
+			},
+			[](void *data,wl_data_device *,uint32_t,wl_fixed_t x,wl_fixed_t y) {
+				auto &state=*static_cast<State *>(data);
+				if (!state.drag_files || state.drag_dropped) return;
+				state.drag_x=wl_fixed_to_int(x); state.drag_y=wl_fixed_to_int(y);
+				state.drag_event(2);
+			},
+			[](void *data,wl_data_device *) {
+				auto &state=*static_cast<State *>(data);
+				if (!state.drag_files || state.drag_dropped) { state.release_drag_offer(); return; }
+				state.drag_dropped=true;
+				state.drag_event(4);
+			},
 			[](void *data,wl_data_device *,wl_data_offer *offer) {
 				auto &state=*static_cast<State *>(data);
 				if (state.selection_offer && state.selection_offer!=offer) { state.offer_mimes.erase(state.selection_offer); wl_data_offer_destroy(state.selection_offer); }
@@ -533,25 +682,7 @@ struct WaylandPresentation::State {
 		const char *mime=nullptr;
 		for (const auto *wanted : text_mimes) if (known->second.contains(wanted)) { mime=wanted; break; }
 		if (!mime) return std::nullopt;
-		int pipes[2];
-		if (pipe2(pipes,O_CLOEXEC)<0) return std::nullopt;
-		wl_data_offer_receive(selection_offer,mime,pipes[1]);
-		close(pipes[1]);
-		wl_display_flush(display);
-		std::string text;
-		const auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(2);
-		for (;;) {
-			pollfd entry{pipes[0],POLLIN,0};
-			const auto left=std::chrono::duration_cast<std::chrono::milliseconds>(limit-std::chrono::steady_clock::now()).count();
-			if (left<=0 || ::poll(&entry,1,int(left))<=0) break;
-			char buffer[4096];
-			const auto count=read(pipes[0],buffer,sizeof buffer);
-			if (count<=0) break;
-			text.append(buffer,size_t(count));
-			if (text.size()>(16U<<20)) break;
-		}
-		close(pipes[0]);
-		return std::make_pair(selection_counter,std::move(text));
+		return std::make_pair(selection_counter,receive_offer(selection_offer,mime));
 	}
 
 	void watch_output(Output &output) {
@@ -1086,6 +1217,12 @@ DesktopPresentation WaylandPresentation::callbacks()
 	callbacks.translucent=[this](uint64_t handle,bool translucent) {
 		if (translucent) state->translucent.insert(handle); else state->translucent.erase(handle);
 	};
+	callbacks.drag_answer=[this](uint32_t stage,uint32_t effect) { state->answer_drag(stage,effect); };
+	callbacks.drag_out=[this](std::string_view uris) { return state->drag_out(uris); };
+	callbacks.drag_out_state=[this] {
+		if (state->display) state->events(std::chrono::milliseconds(0));
+		return state->out_state;
+	};
 	return callbacks;
 }
 
@@ -1101,6 +1238,7 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 		if (const auto found=state->surfaces.find(handle);found!=state->surfaces.end() && found->second->role)
 			for (auto &[child,surface] : state->surfaces) if (surface->parent_role==found->second->role) surface->parent_role=nullptr;
 		if (state->pointer_window==handle) state->pointer_window=0;
+		if (state->drag_window==handle) state->drag_window=0;
 		if (state->keyboard_window==handle) state->keyboard_window=0;
 		std::erase_if(state->pending,[&](const DesktopEvent &event) { return event.window==handle; });
 		if (state->constrained_window==handle) state->release_constraint();

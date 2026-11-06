@@ -1003,8 +1003,58 @@ void NativeWindows::settle_focus_leave(bool now)
 	activate(0);
 }
 
+// A step of a drag of files from the desktop goes to the broker of the thread that owns the window under the pointer, which hands it to
+// the drop target there; the broker takes the files with the arrival. No broker means no window of the program takes drops.
+void NativeWindows::receive_drag(const DesktopEvent &event)
+{
+	const uint32_t stage=event.message;
+	uint32_t effect=0;
+	const auto answer=[&] { if (presentation.drag_answer) presentation.drag_answer(stage,effect); };
+	const auto *window=event.window ? std::as_const(objects).window(event.window) : nullptr;
+	if (stage==1) drop_broker=0;
+	if (!window || !window->visible) {
+		if (stage>=3 && drop_broker && std::as_const(objects).window(drop_broker)) send(drop_broker,0x83d0,3,0);
+		if (stage>=3) drop_broker=0;
+		answer();
+		return;
+	}
+	const auto x=int64_t(window->outer.left)+event.x,y=int64_t(window->outer.top)+event.y;
+	if (x>=INT32_MIN && x<=INT32_MAX && y>=INT32_MIN && y<=INT32_MAX) { cursor_x=int32_t(x); cursor_y=int32_t(y); }
+	uint64_t files=0;
+	if (stage==1) {
+		const auto under=window_at(cursor_x,cursor_y);
+		const auto *owner=std::as_const(objects).window(under ? objects.window_root(under) : event.window);
+		const uint32_t thread=owner ? owner->thread : window->thread;
+		for (const auto handle : top_level_windows()) {
+			const auto *candidate=std::as_const(objects).window(handle);
+			const auto *definition=candidate ? objects.window_class(candidate->class_id) : nullptr;
+			if (candidate && !candidate->destroying && definition && definition->name=="RavenDropBroker" && candidate->thread==thread) {
+				drop_broker=handle;
+				break;
+			}
+		}
+		const auto paths=drop_broker && drop_paths ? drop_paths(event.keymap) : std::vector<std::u16string>{};
+		if (paths.empty() || !global_allocator) { drop_broker=0; answer(); return; }
+		// DROPFILES: the offset of the names, the point (filled in for WM_DROPFILES), fNC and fWide, then the names.
+		std::vector<uint8_t> bytes(20,0);
+		bytes[0]=20; bytes[16]=1;
+		for (const auto &path : paths) {
+			const auto *start=reinterpret_cast<const uint8_t *>(path.c_str());
+			bytes.insert(bytes.end(),start,start+(path.size()+1)*2);
+		}
+		bytes.push_back(0); bytes.push_back(0);
+		files=global_allocator(bytes.size());
+		if (!files) { drop_broker=0; answer(); return; }
+		process.write_memory(global_data ? global_data(files) : files,bytes);
+	}
+	if (drop_broker && std::as_const(objects).window(drop_broker)) effect=uint32_t(send(drop_broker,0x83d0,stage,files));
+	if (stage>=3) drop_broker=0;
+	answer();
+}
+
 void NativeWindows::receive(const DesktopEvent &event)
 {
+	if (event.kind==DesktopEventKind::drag) { receive_drag(event); return; }
 	if (placing_press && (event.kind==DesktopEventKind::pointer_motion || event.kind==DesktopEventKind::pointer_button ||
 		event.kind==DesktopEventKind::pointer_wheel || event.kind==DesktopEventKind::pointer_relative || event.kind==DesktopEventKind::key)) {
 		held_input.push_back(event);

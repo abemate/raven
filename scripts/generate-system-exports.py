@@ -58,7 +58,8 @@ DIRECTORY32 = Path("/usr/i686-w64-mingw32/lib")
 NAMES_ONLY = {"ravenhost": ["RavenFontClose", "RavenFontGlyphs", "RavenFontInfo", "RavenFontMetrics", "RavenFontName", "RavenFontOpen",
                             "RavenFontOutline", "RavenFontRender", "RavenFontScan", "RavenFontTable", "RavenTrace", "RavenCanvasBatch", "RavenCanvasCreate",
                             "RavenCanvasDestroy", "RavenCanvasDraw", "RavenCanvasPixels", "RavenCanvasSize", "RavenPathCombine", "RavenPathWiden",
-                            "RavenShaderRequest", "RavenShaderResult", "RavenShaderRelease", "RavenFileChooserStart", "RavenFileChooserPoll"]}
+                            "RavenShaderRequest", "RavenShaderResult", "RavenShaderRelease", "RavenFileChooserStart", "RavenFileChooserPoll",
+                            "RavenDragStart", "RavenDragPoll"]}
 # atlthunk.dll, the window procedure thunks of Windows 10, has no import library in mingw-w64; its four functions are listed here.
 NAMES_ONLY["atlthunk"] = ["AtlThunk_AllocateData", "AtlThunk_DataToCode", "AtlThunk_FreeData", "AtlThunk_InitData"]
 # combase.dll, Windows' COM and Windows Runtime base, has no import library in mingw-w64: the functions programs and the .NET runtime take from it.

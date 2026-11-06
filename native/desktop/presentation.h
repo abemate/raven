@@ -19,7 +19,11 @@ namespace raven {
 enum class DesktopEventKind { message, pointer_motion, pointer_button, keymap, modifiers, keyboard_focus, key, popup_done, resize, pointer_wheel,
 	pointer_relative,
 	// The host maximized (x 1) or restored (x 0) a top-level window on its own, as a desktop's tiling does; comes before the resize.
-	host_maximized };
+	host_maximized,
+	// Files another program drags over a window: message 1 when the drag arrives (keymap carries the text/uri-list of the files), 2 as it
+	// moves, 3 when it leaves or is cancelled, 4 when it is dropped; x and y are the pointer on the window's surface. Each arrival, move and
+	// drop is answered through drag_answer.
+	drag };
 
 struct DesktopEvent {
 	uint64_t window;
@@ -95,6 +99,14 @@ struct DesktopPresentation {
 	// Whether a window's frames carry alpha (premultiplied, in the fourth byte of each pixel), as a layered window that
 	// UpdateLayeredWindow fills does, so the desktop shows through where they are transparent. Absent, every frame is opaque.
 	std::function<void(uint64_t handle,bool translucent)> translucent;
+	// The answer to a drag event (see DesktopEventKind::drag): the DROPEFFECT the window under the pointer takes (0 for none, 1 copy, 2
+	// move); for a drop (stage 4), what it took, which ends the drag.
+	std::function<void(uint32_t stage,uint32_t effect)> drag_answer;
+	// Carries a drag the program began with the button still held out to the desktop, offering the files of a text/uri-list to be
+	// copied; false when the host cannot (no press to start it from).
+	std::function<bool(std::string_view uris)> drag_out;
+	// How that drag went: 0 while it goes on, 1 dropped on a client that takes the files, 2 cancelled or refused.
+	std::function<uint32_t()> drag_out_state;
 };
 
 }
