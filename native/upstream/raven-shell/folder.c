@@ -143,6 +143,67 @@ PIDLIST_ABSOLUTE WINAPI ILCreateFromPathW(PCWSTR path)
 	return path ? (PIDLIST_ABSOLUTE)list_of_text(path) : NULL;
 }
 
+/* SHILCreateFromPath: the item id list of a path that exists, and the attributes asked for in *attributes that it has. */
+HRESULT WINAPI SHILCreateFromPath(PCWSTR path, PIDLIST_ABSOLUTE *list, DWORD *attributes)
+{
+	DWORD found;
+	if (!path || !list)
+		return E_INVALIDARG;
+	*list = NULL;
+	found = GetFileAttributesW(path);
+	if (found == INVALID_FILE_ATTRIBUTES)
+		return HRESULT_FROM_WIN32(GetLastError() ? GetLastError() : ERROR_FILE_NOT_FOUND);
+	if (!(*list = ILCreateFromPathW(path)))
+		return E_OUTOFMEMORY;
+	if (attributes) {
+		DWORD has = SFGAO_FILESYSTEM | SFGAO_CANCOPY | SFGAO_CANMOVE | SFGAO_CANRENAME | SFGAO_CANDELETE | SFGAO_HASPROPSHEET;
+		if (found & FILE_ATTRIBUTE_DIRECTORY)
+			has |= SFGAO_FOLDER | SFGAO_FILESYSANCESTOR | SFGAO_STORAGE | SFGAO_HASSUBFOLDER;
+		else
+			has |= SFGAO_STREAM;
+		if (found & FILE_ATTRIBUTE_HIDDEN)
+			has |= SFGAO_HIDDEN;
+		if (found & FILE_ATTRIBUTE_READONLY)
+			has |= SFGAO_READONLY;
+		*attributes &= has;
+	}
+	return S_OK;
+}
+
+/* SHOpenFolderAndSelectItems: the folder opens in the desktop's file manager, through the shell's open verb (xdg-open). The desktop is
+ * not told which items to select: the open verb takes a folder, not the files in it. */
+HRESULT WINAPI SHOpenFolderAndSelectItems(PCIDLIST_ABSOLUTE folder, UINT count, PCUITEMID_CHILD_ARRAY items, DWORD flags)
+{
+	typedef HINSTANCE (WINAPI *ShellExecuteWFn)(HWND, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, INT);
+	static ShellExecuteWFn execute;
+	WCHAR path[MAX_PATH];
+	DWORD found;
+	if (!folder)
+		return E_INVALIDARG;
+	if (!path_of_list(L"", (PCUIDLIST_RELATIVE)folder, path, MAX_PATH))
+		return E_FAIL;
+	/* Given no items, the list names the item itself: its folder opens. */
+	found = GetFileAttributesW(path);
+	if (!count && found != INVALID_FILE_ATTRIBUTES && !(found & FILE_ATTRIBUTE_DIRECTORY)) {
+		WCHAR *slash = NULL, *at;
+		for (at = path; *at; ++at)
+			if (*at == L'\\' || *at == L'/')
+				slash = at;
+		if (slash)
+			*slash = 0;
+	}
+	(void)items;
+	(void)flags;
+	if (!execute) {
+		HMODULE shell = LoadLibraryW(L"shell32.dll");
+		if (shell)
+			execute = (ShellExecuteWFn)GetProcAddress(shell, "ShellExecuteW");
+	}
+	if (!execute)
+		return E_NOTIMPL;
+	return (INT_PTR)execute(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL) > 32 ? S_OK : E_FAIL;
+}
+
 BOOL WINAPI ILIsEqual(PCIDLIST_ABSOLUTE first, PCIDLIST_ABSOLUTE second)
 {
 	WCHAR left[MAX_PATH], right[MAX_PATH];

@@ -156,7 +156,7 @@ def main():
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "SHCreateMemStream", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "ExtractIconExW", "ExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
                    "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl",
                    "RoGetActivationFactory", "RoActivateInstance", "CoCreateFreeThreadedMarshaler",
-                   "SHGetDesktopFolder", "SHCreateItemFromIDList", "CreateFileMoniker", "SHLoadIndirectString", "SHGetPropertyStoreFromParsingName", "ILGetSize", "ILGetNext", "ILFindLastID", "ILClone", "ILCloneFirst", "ILCombine", "ILFree", "ILCreateFromPathW", "ILIsEqual",
+                   "SHGetDesktopFolder", "SHCreateItemFromIDList", "CreateFileMoniker", "SHLoadIndirectString", "SHGetPropertyStoreFromParsingName", "ILGetSize", "ILGetNext", "ILFindLastID", "ILClone", "ILCloneFirst", "ILCombine", "ILFree", "ILCreateFromPathW", "ILIsEqual", "SHILCreateFromPath", "SHOpenFolderAndSelectItems",
                    "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo", "CoWaitForMultipleHandles", "OleGetClipboard", "OleRun", "OleLockRunning", "OleSetContainedObject", "StrRetToBufW",
                    "RegisterDragDrop", "RevokeDragDrop", "DoDragDrop", "SHGetImageList", "OleDuplicateData")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))

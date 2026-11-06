@@ -601,12 +601,18 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context)
 		} else {
 			argument = to_utf8(target);
 		}
+		// Started from a child that exits at once, so the desktop's opener belongs to init, which reaps it: nothing waits for it here.
 		const pid_t child = ::fork();
 		if (child == 0) {
 			::setsid();
-			::execlp("xdg-open", "xdg-open", argument.c_str(), static_cast<char *>(nullptr));
-			::_exit(127);
+			if (::fork() == 0) {
+				::execlp("xdg-open", "xdg-open", argument.c_str(), static_cast<char *>(nullptr));
+				::_exit(127);
+			}
+			::_exit(0);
 		}
+		if (child > 0)
+			while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {}
 		return child < 0 ? 0 : 42;
 	};
 	registry.add("ShellExecuteW", 6, [open_target](ApiCall &call) {
