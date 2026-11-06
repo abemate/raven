@@ -8,6 +8,7 @@ Stages (each includes the earlier ones):
   window  the main window opens and draws something other than black
   open    a test PDF passed on the command line opens; its name reaches the title
   view    the document scrolls (PageDown) and zooms (ctrl+plus); the canvas changes each time
+  annotate  a Typewriter note is typed onto the page and ctrl+s saves it; the saved file has the annotation and poppler draws it
 
 usage: native-pdfx.py RAVEN PDFX_DIRECTORY EVIDENCE_DIR [--stage STAGE] [--x11] [--keep-open SECONDS]
 Extra environment for Raven (RAVEN_TRACE_API, RAVEN_SURVEY_MISSING ...) passes through.
@@ -28,7 +29,8 @@ from x11_session import X11Session  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 RUNTIME = Path(f"/run/user/{os.getuid()}/raven-labwc-runtime")
-STAGES = ("window", "open", "view")
+STAGES = ("window", "open", "view", "annotate", "print")
+NOTE = "Raven note 42"
 x11 = None
 
 
@@ -83,6 +85,44 @@ def drawn(image):
 def same(left, right):
     changed = ImageChops.difference(left, right).convert("L").point(lambda value: 255 if value > 16 else 0).getbbox()
     return changed is None or (changed[2] - changed[0]) * (changed[3] - changed[1]) <= 40 * 40
+
+
+def click(x, y):
+    if x11:
+        subprocess.run(["xdotool", "mousemove", str(x), str(y)], env=environment(), check=True, timeout=10)
+        time.sleep(0.3)
+        subprocess.run(["xdotool", "click", "1"], env=environment(), check=True, timeout=10)
+    else:
+        # wlrctl moves relatively: park the pointer in the corner, then travel to the absolute position.
+        subprocess.run(["wlrctl", "pointer", "move", "-4000", "-4000"], env=environment(), check=True, timeout=10)
+        subprocess.run(["wlrctl", "pointer", "move", str(x), str(y)], env=environment(), check=True, timeout=10)
+        time.sleep(0.3)
+        subprocess.run(["wlrctl", "pointer", "click", "left"], env=environment(), check=True, timeout=10)
+    time.sleep(1)
+
+
+def typed(text):
+    if x11:
+        subprocess.run(["xdotool", "type", "--delay", "50", text], env=environment(), check=True, timeout=30)
+    else:
+        subprocess.run(["wtype", "-s", "500", "-d", "40", text], env=environment(), check=True, timeout=60)
+    time.sleep(1)
+
+
+def annotations(path):
+    """The annotation subtypes a PDF holds, looking into compressed streams too."""
+    import re
+    import zlib
+    data = path.read_bytes()
+    chunks = [data]
+    for match in re.finditer(rb"stream\r?\n", data):
+        start = match.end()
+        end = data.find(b"endstream", start)
+        try:
+            chunks.append(zlib.decompress(data[start:end]))
+        except zlib.error:
+            pass
+    return sorted({kind.decode() for chunk in chunks for kind in re.findall(rb"/Subtype\s*/(FreeText|Text|Square|Highlight|Ink)", chunk)})
 
 
 def key(combination):
@@ -213,6 +253,32 @@ def workflow(args):
             zoomed = run.settle("zoom-in")
             if same(scrolled, zoomed):
                 raise RuntimeError("zooming in did not change the view")
+        if stage >= STAGES.index("annotate"):
+            # The Typewriter tool of the Home ribbon, then a blank part of the page right of the big page number.
+            saved_before = pdf.stat().st_mtime_ns
+            click(710, 87)
+            run.shot("typewriter-tool")
+            click(1300, 380)
+            typed(NOTE)
+            key("Escape")
+            typed_view = run.settle("typed")
+            if same(typed_view, zoomed):
+                raise RuntimeError("typing a note did not change the page")
+            key("ctrl+s")
+            run.wait("the saved document", lambda: pdf.stat().st_mtime_ns != saved_before, 120)
+            time.sleep(3)
+            run.settle("saved")
+            found = annotations(pdf)
+            print(f"[{time.strftime('%H:%M:%S')}] saved annotations: {found}", flush=True)
+            if "FreeText" not in found:
+                raise RuntimeError(f"the saved document has no FreeText annotation: {found}")
+            shutil.copyfile(pdf, evidence / "saved.pdf")
+            subprocess.run(["pdftoppm", "-r", "50", "-png", "-f", "1", "-l", "1", str(pdf), str(evidence / "saved-poppler")], check=True)
+        if stage >= STAGES.index("print"):
+            key("ctrl+p")
+            time.sleep(5)
+            run.note_titles()
+            run.settle("print-dialog", timeout=120)
         print(f"stage {args.stage} passed", flush=True)
         end = time.time() + args.keep_open
         while time.time() < end and run.alive():
