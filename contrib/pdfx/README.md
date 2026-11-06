@@ -23,6 +23,11 @@ It builds what is missing of the components (using `components-pdfx/` when it is
   `pdfx-print FILE`, which takes a Linux path or the `C:\...` path PDF-XChange shows, and opens Okular's print dialog (or
   sends it to the default printer with `lp` when Okular is not installed).
 
+## Desktop integration
+
+- Open and Save As show KDE's own file dialog (through the XDG desktop portal), with PDF-XChange's file types as filters.
+  `RAVEN_NATIVE_DIALOGS=0 pdfx` brings back Raven's Windows-style dialog; it also shows by itself when no portal answers.
+
 ## Known gaps
 
 - PDFs whose fonts are not embedded (plain Helvetica, Arial, Times) show no text yet; embedded fonts draw correctly.

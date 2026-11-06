@@ -1180,13 +1180,64 @@ static INT_PTR CALLBACK dialog_proc(HWND window, UINT message, WPARAM wparam, LP
 	return FALSE;
 }
 
+/* The desktop's own dialog, through the runtime's portal service: the owner is disabled as a modal dialog disables it while the
+ * program's messages keep being dispatched, so its windows go on painting and answering the desktop. -1 when the runtime offers no
+ * portal (the dialog here shows instead), else whether the user accepted. */
+static int run_portal(HWND owner, DialogState *state)
+{
+	static UINT_PTR (WINAPI *start)(DialogState *, DWORD, HWND);
+	static DWORD (WINAPI *poll)(UINT_PTR, DialogState *);
+	static BOOL looked;
+	UINT_PTR ticket;
+	DWORD status;
+	BOOL disabled = FALSE;
+	MSG message;
+	if (!looked) {
+		HMODULE host = LoadLibraryW(L"ravenhost.dll");
+		if (host) {
+			start = (void *)GetProcAddress(host, "RavenFileChooserStart");
+			poll = (void *)GetProcAddress(host, "RavenFileChooserPoll");
+		}
+		looked = TRUE;
+	}
+	if (!start || !poll || !(ticket = start(state, sizeof *state, owner)))
+		return -1;
+	if (owner && IsWindowEnabled(owner)) {
+		EnableWindow(owner, FALSE);
+		disabled = TRUE;
+	}
+	while (!(status = poll(ticket, state))) {
+		while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
+			if (message.message == WM_QUIT) {
+				PostQuitMessage((int)message.wParam);
+				break;
+			}
+			TranslateMessage(&message);
+			DispatchMessageW(&message);
+		}
+		MsgWaitForMultipleObjects(0, NULL, FALSE, 50, QS_ALLINPUT);
+	}
+	if (disabled) {
+		EnableWindow(owner, TRUE);
+		SetActiveWindow(owner);
+	}
+	return status == 1 ? 1 : status == 2 ? 0 : -1;
+}
+
 BOOL run_dialog(HWND owner, DialogState *state)
 {
+	int native;
 	/* A template with the frame alone: the controls are made in pixels once the dialog exists. */
 	WORD *buffer, *at;
 	const WCHAR *title = state->title[0] ? state->title : (state->options & FOS_PICKFOLDERS) ? L"Select Folder" : state->save ? L"Save As" : L"Open";
 	Browser *browser;
 	INT_PTR answer;
+	state->has_result = FALSE;
+	state->result_count = 0;
+	if (!state->dir[0])
+		GetCurrentDirectoryW(MAX_PATH, state->dir);
+	if ((native = run_portal(owner, state)) >= 0)
+		return native && state->has_result;
 	if (!load_controls())
 		return FALSE;
 	buffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 1024);
