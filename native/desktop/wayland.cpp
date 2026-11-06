@@ -102,6 +102,9 @@ struct WaylandPresentation::State {
 		// The window's frames carry alpha (see DesktopPresentation::translucent).
 		bool translucent=false;
 		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false;
+		// The compositor maximized or restored the window itself (state_changed), and when Raven last asked it to.
+		bool state_changed=false;
+		std::chrono::steady_clock::time_point maximize_requested{};
 		uint32_t width=0,height=0,pending_width=0,pending_height=0;
 		std::vector<std::unique_ptr<Buffer>> buffers;
 		// The buffer of the last commit, whose pixels are what the compositor shows, and the hash of each of its rows.
@@ -970,6 +973,7 @@ struct WaylandPresentation::State {
 		if (found==surfaces.end() || !found->second->role || found->second->maximized==wanted) return;
 		auto &window=*found->second;
 		window.maximized=wanted;
+		window.maximize_requested=std::chrono::steady_clock::now();
 		window.configured=false;
 		if (wanted) xdg_toplevel_set_maximized(window.role);
 		else xdg_toplevel_unset_maximized(window.role);
@@ -999,8 +1003,18 @@ struct WaylandPresentation::State {
 				xdg_surface_ack_configure(surface,serial); static_cast<Surface *>(data)->configured=true;
 			}};
 			static const xdg_toplevel_listener role_listener{
-				[](void *data,xdg_toplevel *,int32_t width,int32_t height,wl_array *) {
+				[](void *data,xdg_toplevel *,int32_t width,int32_t height,wl_array *states) {
 					auto &window=*static_cast<Surface *>(data);
+					// Whether the compositor shows the window maximized: a desktop that tiles a maximized window (KWin's Meta+Left)
+					// restores it, and the program is told. A configure sent before a request of Raven's arrived is not taken as an answer.
+					bool host_maximized=false;
+					for (const auto *state=static_cast<const uint32_t *>(states->data);
+						reinterpret_cast<const char *>(state)<static_cast<const char *>(states->data)+states->size;++state)
+						if (*state==XDG_TOPLEVEL_STATE_MAXIMIZED) host_maximized=true;
+					if (host_maximized!=window.maximized && std::chrono::steady_clock::now()-window.maximize_requested>std::chrono::seconds(1)) {
+						window.maximized=host_maximized;
+						window.state_changed=true;
+					}
 					if (width>0 && height>0 && (uint32_t(width)!=window.width || uint32_t(height)!=window.height)) {
 						window.pending_width=uint32_t(width); window.pending_height=uint32_t(height); window.resized=true;
 					}
@@ -1082,6 +1096,11 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 		state->events(budget);
 		events.swap(state->pending);
 		for (auto &[handle,surface] : state->surfaces) {
+			if (surface->state_changed && !surface->is_popup) {
+				events.push_back({handle,0,0,0,DesktopEventKind::host_maximized,surface->maximized ? 1 : 0,0});
+				if (surface->maximized) state->maximized.insert(handle); else state->maximized.erase(handle);
+				surface->state_changed=false;
+			}
 			if (surface->resized && !surface->is_popup) {
 				events.push_back({handle,0,0,0,DesktopEventKind::resize,int32_t(surface->pending_width),int32_t(surface->pending_height)});
 				surface->resized=false;

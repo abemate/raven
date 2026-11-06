@@ -17,7 +17,9 @@ namespace raven {
 // popup_done: the compositor dismissed a popup (for example by a click outside it).
 // pointer_relative: x and y carry the movement of the mouse itself, unaccelerated and not stopped by the screen edges.
 enum class DesktopEventKind { message, pointer_motion, pointer_button, keymap, modifiers, keyboard_focus, key, popup_done, resize, pointer_wheel,
-	pointer_relative };
+	pointer_relative,
+	// The host maximized (x 1) or restored (x 0) a top-level window on its own, as a desktop's tiling does; comes before the resize.
+	host_maximized };
 
 struct DesktopEvent {
 	uint64_t window;

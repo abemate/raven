@@ -1108,6 +1108,20 @@ void NativeWindows::receive(const DesktopEvent &event)
 		if (pressed && !previous && (key.code==0x14 || key.code==0x90 || key.code==0x91)) vk_async[key.code]^=1;
 		return;
 	}
+	if (event.kind==DesktopEventKind::host_maximized) {
+		// The style follows the state the desktop gave the window, so the resize that comes next is SIZE_MAXIMIZED or SIZE_RESTORED;
+		// a window maximized this way remembers where to restore to, as ShowWindow's maximizing does.
+		auto *window=objects.window(event.window);
+		if (!window || window->parent) return;
+		constexpr uint32_t maximized=0x01000000U,minimized=0x20000000U;
+		if (event.x && !(window->style & maximized)) {
+			if (!(window->style & minimized)) window->restore=window->outer;
+			window->style=(window->style & ~minimized) | maximized;
+		} else if (!event.x && (window->style & maximized)) {
+			window->style&=~maximized;
+		}
+		return;
+	}
 	if (event.kind==DesktopEventKind::resize) {
 		// The host's configured size applies to resizable windows and to a requested maximization.
 		const auto *window=std::as_const(objects).window(event.window);
