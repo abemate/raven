@@ -60,6 +60,8 @@ void NativeWindows::shutdown()
 void NativeWindows::remove_host_window(uint64_t handle)
 {
 	if (surface_cleanup) surface_cleanup(handle);
+	// A new host window starts without the state, so it is sent again with the next frame.
+	host_maximized_state.erase(handle);
 	if (presentation.remove) presentation.remove(handle);
 }
 
@@ -290,7 +292,14 @@ void NativeWindows::present(uint64_t handle, bool force)
 		} catch (const std::exception &) {}
 	}
 	// Host titles use replacement characters; the guest retains every UTF-16 code unit.
-	if (presentation.maximize) presentation.maximize(handle,(window->style & 0x01000000U)!=0);
+	if (presentation.maximize) {
+		const bool wanted=(window->style & 0x01000000U)!=0;
+		const auto known=host_maximized_state.find(handle);
+		if (known==host_maximized_state.end() || known->second!=wanted) {
+			host_maximized_state[handle]=wanted;
+			presentation.maximize(handle,wanted);
+		}
+	}
 	if (presentation.transient_for) presentation.transient_for(handle,owning ? owner : 0);
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
 	place_host_surface(handle);
@@ -1113,6 +1122,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 		// a window maximized this way remembers where to restore to, as ShowWindow's maximizing does.
 		auto *window=objects.window(event.window);
 		if (!window || window->parent) return;
+		host_maximized_state[event.window]=event.x!=0;
 		constexpr uint32_t maximized=0x01000000U,minimized=0x20000000U;
 		if (event.x && !(window->style & maximized)) {
 			if (!(window->style & minimized)) window->restore=window->outer;

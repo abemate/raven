@@ -1004,6 +1004,8 @@ struct WaylandPresentation::State {
 		if (wanted) maximized.insert(handle); else maximized.erase(handle);
 		const auto found=surfaces.find(handle);
 		if (found==surfaces.end() || !found->second->role || found->second->maximized==wanted) return;
+		// The desktop changed the state itself and the program has not been told yet: its change stands.
+		if (found->second->state_changed) return;
 		auto &window=*found->second;
 		window.maximized=wanted;
 		window.maximize_requested=std::chrono::steady_clock::now();

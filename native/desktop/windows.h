@@ -254,6 +254,9 @@ private:
 	// PostQuitMessage codes by thread.
 	std::map<uint32_t,uint32_t> quits;
 	std::set<uint64_t> dirty_roots;
+	// The maximized state each top-level window last agreed with the desktop: what Raven asked for, or what the desktop reported.
+	// Only a change the program makes is sent, so a frame drawn before the desktop's own change arrives does not undo it.
+	std::map<uint64_t,bool> host_maximized_state;
 	bool dumped=false;
 	std::chrono::steady_clock::time_point started=std::chrono::steady_clock::now();
 	std::chrono::steady_clock::time_point deadline;
