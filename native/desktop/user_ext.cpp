@@ -345,6 +345,32 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 		call.ret(before != timers.size());
 	});
 
+	// GetGUIThreadInfo(thread, GUITHREADINFO): the desktop's one input state, whichever thread is named. The flags tell a blinking caret,
+	// an open menu and a popup menu; the windows are the active, focus and capture ones, the owner of an open menu, none sizing and the
+	// caret's, with the caret's rectangle in its window's client coordinates. The structure's size must be the one of the program's width.
+	registry.add("GetGUIThreadInfo", 2, [this](ApiCall &call) {
+		const size_t pointer = call.pointer_width(), size = pointer == 8 ? 72 : 48;
+		if (!call[1] || call.load<uint32_t>(call[1]) != size) {
+			call.fail(87);
+			return;
+		}
+		const auto live = [&](uint64_t handle) { return handle && std::as_const(objects).window(handle) ? handle : 0; };
+		uint32_t flags = 0;
+		if (caret && !caret->hidden) flags |= 1;
+		if (menu_active()) flags |= 4;
+		if (!popups.empty()) flags |= 0x10;
+		uint64_t menu_owner = open_menu_window;
+		if (!menu_owner && !popups.empty()) menu_owner = popups.front().parent;
+		const uint64_t windows[] = {live(active), live(focus), live(capture), live(menu_owner), 0, caret ? live(caret->window) : 0};
+		call.store<uint32_t>(call[1] + 4, flags);
+		for (size_t index = 0; index < 6; ++index)
+			call.store_pointer(call[1] + 8 + index * pointer, windows[index]);
+		const uint64_t rect = call[1] + 8 + 6 * pointer;
+		const int32_t box[] = {caret ? caret->x : 0, caret ? caret->y : 0, caret ? caret->x + caret->width : 0, caret ? caret->y + caret->height : 0};
+		for (size_t index = 0; index < 4; ++index)
+			call.store<int32_t>(rect + index * 4, box[index]);
+		call.ret(1);
+	});
 	// ---- caret ----
 	registry.add("CreateCaret", 4, [this](ApiCall &call) {
 		if (!std::as_const(objects).window(call[0])) {
