@@ -3,6 +3,8 @@
 `shell.c` is Raven code, built by `scripts/provision-controls.py` into `raven-shell.dll` on the
 public Windows headers. It supplies what the system libraries of the guest cannot answer on their own:
 
+- `PageSetupDlgW` (`pagesetup.c`): paper size, orientation and margins for the default printer or the one the request names, from
+  the printer's own answers through winspool;
 - the common file dialogs: `GetOpenFileNameW`, `GetSaveFileNameW` and the `IFileOpenDialog` /
   `IFileSaveDialog` objects (with `IFileDialogCustomize` check boxes), all driven by one dialog
   template assembled in memory and shown by the dialog manager of the user32 component;

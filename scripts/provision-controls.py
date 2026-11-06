@@ -134,7 +134,7 @@ def main():
     shell_support = repo / "native/upstream/raven-shell"
     shell_objects = [objects / "shell.o", objects / "shell_link.o", objects / "shell_com.o", objects / "shell_crt.o", objects / "shell_stream.o", objects / "shell_dialog.o",
                      objects / "shell_netaddress.o", objects / "shell_winrt.o", objects / "shell_knownfolder.o", objects / "shell_rot.o", objects / "shell_folder.o", objects / "shell_errorinfo.o",
-                     objects / "shell_clipboard.o", objects / "shell_dragdrop.o"]
+                     objects / "shell_clipboard.o", objects / "shell_dragdrop.o", objects / "shell_pagesetup.o"]
     shell_flags = ["-O2", "-w", "-ffreestanding", f"-ffile-prefix-map={repo}=raven"]
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "shell.c", "-o", shell_objects[0]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "link.c", "-o", shell_objects[1]])
@@ -150,8 +150,9 @@ def main():
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "errorinfo.c", "-o", shell_objects[11]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "clipboard.c", "-o", shell_objects[12]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "dragdrop.c", "-o", shell_objects[13]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "pagesetup.c", "-o", shell_objects[14]])
     shell_defined = decorated(shell_objects)
-    shell_names = ("GetRunningObjectTable", "CreateItemMoniker", "CoCreateInstance", "CoCreateInstanceEx", "CoGetClassObject", "CoGetTreatAsClass", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "QISearch", "CLSIDFromProgID",
+    shell_names = ("GetRunningObjectTable", "CreateItemMoniker", "CoCreateInstance", "CoCreateInstanceEx", "CoGetClassObject", "CoGetTreatAsClass", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "PageSetupDlgW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "QISearch", "CLSIDFromProgID",
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "SHCreateMemStream", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "ExtractIconExW", "ExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
                    "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl",
                    "RoGetActivationFactory", "RoActivateInstance", "CoCreateFreeThreadedMarshaler",
