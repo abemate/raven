@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 
 #include "objects.h"
 
@@ -63,6 +64,20 @@ size_t bitmap_row_bytes(const DesktopBitmap &bitmap);
 uint32_t bitmap_color(const DesktopBitmap &bitmap, const uint8_t *row, int64_t x);
 bool blit(DesktopObjects &objects, DesktopDC &destination, int32_t dx, int32_t dy, int32_t dw, int32_t dh, DesktopDC *source_dc,
 	int32_t sx, int32_t sy, int32_t sw, int32_t sh, uint32_t rop);
+
+// The world transform (GM_ADVANCED) and the page mapping of MM_ISOTROPIC and MM_ANISOTROPIC as one affine map from logical
+// coordinates to the coordinates a Painter takes; the window and viewport origins stay in the DC's origin as before. Paths, clip
+// rectangles and LPtoDP go through it; other drawing still treats logical coordinates as device ones.
+struct LogicalMap {
+	double m11 = 1, m12 = 0, m21 = 0, m22 = 1, dx = 0, dy = 0;
+	bool identity() const { return m11 == 1 && m12 == 0 && m21 == 0 && m22 == 1 && dx == 0 && dy == 0; }
+	std::array<double, 2> operator()(double x, double y) const { return {x * m11 + y * m21 + dx, x * m12 + y * m22 + dy}; }
+	// How much a length grows, for pen widths.
+	double scale() const;
+	// The logical point a mapped point came from; the map itself when it cannot be inverted.
+	std::array<double, 2> inverse(double x, double y) const;
+};
+LogicalMap logical_map(const DesktopDC &dc);
 
 // Resolves the brush and pen a DC has selected, including the stock DC brush and DC pen colors.
 const DesktopBrush &selected_brush(DesktopObjects &objects, const DesktopDC &dc);

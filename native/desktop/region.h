@@ -13,6 +13,10 @@ public:
 	DesktopRegion &operator=(const DesktopRegion &other);
 	DesktopRegion(DesktopRegion &&) noexcept;
 	DesktopRegion &operator=(DesktopRegion &&) noexcept;
+	// The most rectangles a region may take: a page-high shape at printer resolution has a band per row.
+	static constexpr int max_rectangles=65536;
+	// The union of the rectangles, built at once (adding them one by one costs a copy each).
+	static DesktopRegion from_rectangles(const std::vector<DesktopRect> &rects);
 	void add(DesktopRect rect);
 	void subtract(DesktopRect rect);
 	void combine(const DesktopRegion &first,const DesktopRegion &second,uint32_t mode);

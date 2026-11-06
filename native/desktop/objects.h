@@ -109,6 +109,9 @@ struct DesktopDCState {
 	uint32_t graphics_mode=1;
 	std::array<float,6> world{1,0,0,1,0,0};
 	uint32_t arc_direction=1;
+	float miter_limit=10.0f;
+	uint32_t map_mode=1;
+	int32_t window_ext_x=1,window_ext_y=1,viewport_ext_x=1,viewport_ext_y=1;
 };
 
 struct DesktopDC {
@@ -142,11 +145,37 @@ struct DesktopDC {
 	std::array<float,6> world{1,0,0,1,0,0};
 	// AD_COUNTERCLOCKWISE until SetArcDirection: the way arcs and rectangles are drawn in a path.
 	uint32_t arc_direction=1;
+	// The limit SetMiterLimit sets for mitered joins of geometric pens, 10 by default.
+	float miter_limit=10.0f;
+	// MM_TEXT (1) until SetMapMode; under MM_ISOTROPIC (7) and MM_ANISOTROPIC (8) the window and viewport extents scale logical
+	// coordinates, which paths, clip rectangles and LPtoDP honour (see logical_map).
+	uint32_t map_mode=1;
+	int32_t window_ext_x=1,window_ext_y=1,viewport_ext_x=1,viewport_ext_y=1;
 	// The path a BeginPath bracket records: its figures as logical points, each closed when it becomes a region. Open while the
 	// bracket lasts; EndPath closes it for PathToRegion.
+	// A figure runs from a MoveToEx (or the current position) through the lines and curves after it until CloseFigure closes it
+	// or the next move starts another; `drawing` says the last figure still takes points, `closed` which figures were closed.
 	struct Path {
 		bool open=true;
 		std::vector<std::vector<std::array<double,2>>> figures;
+		std::vector<bool> closed;
+		bool drawing=false;
+		void move(std::array<double,2> point)
+		{
+			if (drawing && figures.back().size()==1) { figures.back()[0]=point; return; }
+			figures.push_back({point}); closed.push_back(false); drawing=true;
+		}
+		void line(std::array<double,2> from,std::array<double,2> point)
+		{
+			if (!drawing) move(from);
+			figures.back().push_back(point);
+		}
+		// Closes the figure being drawn; false when there is none.
+		bool close()
+		{
+			if (!drawing) return false;
+			closed.back()=true; drawing=false; return true;
+		}
 	};
 	std::optional<Path> path{};
 	// Parts of the window other windows cover; drawing never reaches them.
@@ -284,7 +313,8 @@ struct DesktopWindow {
 
 class DesktopObjects {
 public:
-	explicit DesktopObjects(size_t limit = 256 * 1024 * 1024, IconDisplay display = {},DesktopMetrics metrics = {},DesktopColors colors = desktop_colors);
+	// The memory GDI objects may hold together: room for a program's own bitmaps and a printer page at 300 dpi.
+	explicit DesktopObjects(size_t limit = size_t(1024) * 1024 * 1024, IconDisplay display = {},DesktopMetrics metrics = {},DesktopColors colors = desktop_colors);
 	DesktopObjects(const DesktopObjects &) = delete;
 	DesktopObjects &operator=(const DesktopObjects &) = delete;
 	using Object = std::variant<DesktopIcon, DesktopBitmap, DesktopDC, DesktopWindow, DesktopFont, DesktopBrush, DesktopMenu, DesktopRegion, DesktopPen, DesktopPalette>;

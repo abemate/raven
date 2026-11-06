@@ -1,4 +1,6 @@
 #include "api.h"
+#include "gdi.h"
+#include <cmath>
 
 #include <algorithm>
 #include <array>
@@ -204,7 +206,15 @@ bool NativeDesktop::clip_dispatch(std::string_view name)
 				result=value ? value->complexity() : 2;
 				if (!objects.select_clip(args[0],std::move(value))) throw uint32_t(8);
 			} else {
-				auto value=rectangle(int32_t(args[1]),int32_t(args[2]),int32_t(args[3]),int32_t(args[4]));
+				int32_t left=int32_t(args[1]),top=int32_t(args[2]),right=int32_t(args[3]),bottom=int32_t(args[4]);
+				// The rectangle is logical; under a mapping it covers the box around its mapped corners.
+				if (const auto map=logical_map(*device);!map.identity()) {
+					const auto a=map(left,top),b=map(right,bottom),c=map(left,bottom),d=map(right,top);
+					const auto clamp=[](double v){ return int32_t(std::clamp(std::lround(v),long(INT32_MIN/2),long(INT32_MAX/2))); };
+					left=clamp(std::min({a[0],b[0],c[0],d[0]}));right=clamp(std::max({a[0],b[0],c[0],d[0]}));
+					top=clamp(std::min({a[1],b[1],c[1],d[1]}));bottom=clamp(std::max({a[1],b[1],c[1],d[1]}));
+				}
+				auto value=rectangle(left,top,right,bottom);
 				if (device->application_clip) {
 					DesktopRegion next;next.combine(*device->application_clip,value,name=="IntersectClipRect" ? 1 : 4);value=std::move(next);
 				} else if (name=="ExcludeClipRect") {

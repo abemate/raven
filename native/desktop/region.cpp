@@ -44,13 +44,33 @@ void DesktopRegion::change(DesktopRect rect,bool remove)
 	const bool changed=remove ? pixman_region32_subtract(&next.state->region,&next.state->region,&operand) :
 		pixman_region32_union(&next.state->region,&next.state->region,&operand);
 	pixman_region32_fini(&operand);
-	if (!changed || pixman_region32_n_rects(&next.state->region)>4096) throw std::bad_alloc();
+	if (!changed || pixman_region32_n_rects(&next.state->region)>max_rectangles) throw std::bad_alloc();
 	state.swap(next.state);
 #else
 	(void)remove; throw std::runtime_error("native region support not built");
 #endif
 }
 void DesktopRegion::add(DesktopRect rect) { change(rect,false); }
+DesktopRegion DesktopRegion::from_rectangles(const std::vector<DesktopRect> &rects)
+{
+	DesktopRegion region;
+#ifdef RAVEN_PIXMAN
+	if (rects.empty()) return region;
+	if (rects.size()>size_t(max_rectangles)) throw std::bad_alloc();
+	std::vector<pixman_box32_t> boxes;boxes.reserve(rects.size());
+	for (const auto &rect : rects) if (rect.right>rect.left && rect.bottom>rect.top) boxes.push_back({rect.left,rect.top,rect.right,rect.bottom});
+	region.state=std::make_unique<State>();
+	pixman_region32_fini(&region.state->region);
+	if (!pixman_region32_init_rects(&region.state->region,boxes.data(),int(boxes.size()))) {
+		pixman_region32_init(&region.state->region);
+		throw std::bad_alloc();
+	}
+	if (pixman_region32_n_rects(&region.state->region)>max_rectangles) throw std::bad_alloc();
+#else
+	(void)rects;throw std::runtime_error("native region support not built");
+#endif
+	return region;
+}
 void DesktopRegion::subtract(DesktopRect rect) { change(rect,true); }
 void DesktopRegion::combine(const DesktopRegion &first,const DesktopRegion &second,uint32_t mode)
 {
@@ -69,7 +89,7 @@ void DesktopRegion::combine(const DesktopRegion &first,const DesktopRegion &seco
 		changed=pixman_region32_subtract(&left.region,a,b) && pixman_region32_subtract(&right.region,b,a) &&
 			pixman_region32_union(&next.state->region,&left.region,&right.region);
 	}
-	if (!changed || pixman_region32_n_rects(&next.state->region)>4096) throw std::bad_alloc();
+	if (!changed || pixman_region32_n_rects(&next.state->region)>max_rectangles) throw std::bad_alloc();
 	state.swap(next.state);
 #else
 	(void)first;(void)second;throw std::runtime_error("native region support not built");

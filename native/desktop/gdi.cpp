@@ -326,6 +326,42 @@ const DesktopBrush &selected_brush(DesktopObjects &objects, const DesktopDC &dc)
 	return stock;
 }
 
+double LogicalMap::scale() const
+{
+	return std::sqrt(std::abs(m11 * m22 - m12 * m21));
+}
+
+std::array<double, 2> LogicalMap::inverse(double x, double y) const
+{
+	const double determinant = m11 * m22 - m12 * m21;
+	if (determinant == 0)
+		return {x, y};
+	x -= dx;
+	y -= dy;
+	return {(x * m22 - y * m21) / determinant, (y * m11 - x * m12) / determinant};
+}
+
+LogicalMap logical_map(const DesktopDC &dc)
+{
+	LogicalMap map;
+	if (dc.graphics_mode == 2) {
+		const auto &w = dc.world;
+		map = {w[0], w[1], w[2], w[3], w[4], w[5]};
+	}
+	if (dc.map_mode == 7 || dc.map_mode == 8) {
+		double sx = double(dc.viewport_ext_x) / dc.window_ext_x, sy = double(dc.viewport_ext_y) / dc.window_ext_y;
+		if (dc.map_mode == 7) {
+			// Isotropic: one unit is as long both ways, the smaller of the two scales, keeping each axis's direction.
+			const double s = std::min(std::abs(sx), std::abs(sy));
+			sx = std::copysign(s, sx);
+			sy = std::copysign(s, sy);
+		}
+		const double ox = dc.window_org_x, oy = dc.window_org_y;
+		map = {map.m11 * sx, map.m12 * sy, map.m21 * sx, map.m22 * sy, (map.dx - ox) * sx + ox, (map.dy - oy) * sy + oy};
+	}
+	return map;
+}
+
 const DesktopPen &selected_pen(DesktopObjects &objects, const DesktopDC &dc)
 {
 	static DesktopPen stock;

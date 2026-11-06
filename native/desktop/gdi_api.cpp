@@ -157,6 +157,9 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			state.brush_org_x = dc.brush_org_x; state.brush_org_y = dc.brush_org_y; state.window_org_x = dc.window_org_x;
 			state.window_org_y = dc.window_org_y; state.viewport_org_x = dc.viewport_org_x; state.viewport_org_y = dc.viewport_org_y;
 			state.arc_direction = dc.arc_direction;
+			state.miter_limit = dc.miter_limit;
+			state.map_mode = dc.map_mode; state.window_ext_x = dc.window_ext_x; state.window_ext_y = dc.window_ext_y;
+			state.viewport_ext_x = dc.viewport_ext_x; state.viewport_ext_y = dc.viewport_ext_y;
 			state.graphics_mode = dc.graphics_mode; state.world = dc.world;
 			dc.saved.push_back(std::move(state));
 			call.ret(dc.saved.size());
@@ -182,6 +185,9 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			dc.brush_org_x = state.brush_org_x; dc.brush_org_y = state.brush_org_y; dc.window_org_x = state.window_org_x;
 			dc.window_org_y = state.window_org_y; dc.viewport_org_x = state.viewport_org_x; dc.viewport_org_y = state.viewport_org_y;
 			dc.arc_direction = state.arc_direction;
+			dc.miter_limit = state.miter_limit;
+			dc.map_mode = state.map_mode; dc.window_ext_x = state.window_ext_x; dc.window_ext_y = state.window_ext_y;
+			dc.viewport_ext_x = state.viewport_ext_x; dc.viewport_ext_y = state.viewport_ext_y;
 			dc.user_dx = state.viewport_org_x - state.window_org_x; dc.user_dy = state.viewport_org_y - state.window_org_y;
 			dc.graphics_mode = state.graphics_mode; dc.world = state.world;
 			call.ret(1);
@@ -303,18 +309,21 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		guarded(call, 0, [&] { call.ret(require_dc(call, 0).rop2); });
 	});
 	registry.add("GetMapMode", 1, [=, this](ApiCall &call) {
-		guarded(call, 0, [&] {
-			require_dc(call, 0);
-			call.ret(1);
-		});
+		guarded(call, 0, [&] { call.ret(require_dc(call, 0).map_mode); });
 	});
+	// SetMapMode(dc, mode): MM_TEXT, MM_ISOTROPIC and MM_ANISOTROPIC; the fixed metric and English modes are not provided and fail
+	// visibly. Entering MM_TEXT puts the extents back to one to one.
 	registry.add("SetMapMode", 2, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
-			require_dc(call, 0);
-			// Only the default mapping exists; requesting another one fails visibly.
-			if (call.u32(1) != 1)
+			auto &dc = require_dc(call, 0);
+			const uint32_t mode = call.u32(1);
+			if (mode != 1 && mode != 7 && mode != 8)
 				throw uint32_t(120);
-			call.ret(1);
+			const uint32_t previous = dc.map_mode;
+			dc.map_mode = mode;
+			if (mode == 1)
+				dc.window_ext_x = dc.window_ext_y = dc.viewport_ext_x = dc.viewport_ext_y = 1;
+			call.ret(previous);
 		});
 	});
 	registry.add("SetStretchBltMode", 2, [=, this](ApiCall &call) {
@@ -392,7 +401,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(1);
 		});
 	});
-	// Logical and device coordinates differ only by the window and viewport origins.
+	// Logical and device coordinates differ by the context's mapping (logical_map) and the window and viewport origins.
 	registry.add("DPtoLP", 3, [=, this](ApiCall &call) {
 		// An unknown device context fails silently, and a non-positive count has nothing to convert.
 		auto *dc = objects.dc(call[0]);
@@ -407,8 +416,9 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		}
 		for (int32_t i = 0; i < count; ++i) {
 			const auto at = call[1] + uint64_t(i) * 8;
-			call.store<int32_t>(at, call.load<int32_t>(at) - dc->user_dx);
-			call.store<int32_t>(at + 4, call.load<int32_t>(at + 4) - dc->user_dy);
+			const auto point = logical_map(*dc).inverse(call.load<int32_t>(at) - dc->user_dx, call.load<int32_t>(at + 4) - dc->user_dy);
+			call.store<int32_t>(at, int32_t(std::lround(point[0])));
+			call.store<int32_t>(at + 4, int32_t(std::lround(point[1])));
 		}
 		call.ret(1);
 	});
@@ -426,8 +436,9 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		}
 		for (int32_t i = 0; i < count; ++i) {
 			const auto at = call[1] + uint64_t(i) * 8;
-			call.store<int32_t>(at, call.load<int32_t>(at) + dc->user_dx);
-			call.store<int32_t>(at + 4, call.load<int32_t>(at + 4) + dc->user_dy);
+			const auto point = logical_map(*dc)(call.load<int32_t>(at), call.load<int32_t>(at + 4));
+			call.store<int32_t>(at, int32_t(std::lround(point[0])) + dc->user_dx);
+			call.store<int32_t>(at + 4, int32_t(std::lround(point[1])) + dc->user_dy);
 		}
 		call.ret(1);
 	});
@@ -517,12 +528,29 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(0);
 		});
 	});
-	// Only the default mapping exists, and there extents have no effect: they stay one to one and the call succeeds.
-	for (const auto *name : {"SetWindowExtEx", "SetViewportExtEx"})
-		registry.add(name, 4, [=, this](ApiCall &call) {
+	// SetWindowExtEx and SetViewportExtEx(dc, x, y, previous): the extents of MM_ISOTROPIC and MM_ANISOTROPIC; other modes keep theirs
+	// and the call still succeeds, as on Windows. A zero extent is refused.
+	for (const bool window : {true, false})
+		registry.add(window ? "SetWindowExtEx" : "SetViewportExtEx", 4, [=, this](ApiCall &call) {
 			guarded(call, 0, [&] {
-				require_dc(call, 0);
-				write_point(call, call[3], 1, 1);
+				auto &dc = require_dc(call, 0);
+				auto &x = window ? dc.window_ext_x : dc.viewport_ext_x, &y = window ? dc.window_ext_y : dc.viewport_ext_y;
+				if (call[3])
+					write_point(call, call[3], x, y);
+				if (dc.map_mode == 7 || dc.map_mode == 8) {
+					if (!call.i32(1) || !call.i32(2))
+						throw uint32_t(87);
+					x = call.i32(1);
+					y = call.i32(2);
+				}
+				call.ret(1);
+			});
+		});
+	for (const bool window : {true, false})
+		registry.add(window ? "GetWindowExtEx" : "GetViewportExtEx", 2, [=, this](ApiCall &call) {
+			guarded(call, 0, [&] {
+				const auto &dc = require_dc(call, 0);
+				write_point(call, call[1], window ? dc.window_ext_x : dc.viewport_ext_x, window ? dc.window_ext_y : dc.viewport_ext_y);
 				call.ret(1);
 			});
 		});
@@ -589,6 +617,31 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			const uint32_t previous = dc.arc_direction;
 			dc.arc_direction = direction;
 			call.ret(previous);
+		});
+	});
+	// SetMiterLimit(dc, limit, old limit) and GetMiterLimit(dc, limit): the limit is a float, in XMM1 for a 64-bit caller and on the
+	// stack for a 32-bit one. It is kept with the DC; the pens drawn here join their lines without miters of their own.
+	registry.add("SetMiterLimit", 3, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			auto &dc = require_dc(call, 0);
+			const uint32_t bits = call.pointer_width() == 4 ? call.u32(1) : uint32_t(call.process.api_float_arguments()[1]);
+			float limit;
+			std::memcpy(&limit, &bits, 4);
+			if (!(limit >= 1.0f))
+				throw uint32_t(87);
+			if (call[2])
+				call.store<float>(call[2], dc.miter_limit);
+			dc.miter_limit = limit;
+			call.ret(1);
+		});
+	});
+	registry.add("GetMiterLimit", 2, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			auto &dc = require_dc(call, 0);
+			if (!call[1])
+				throw uint32_t(87);
+			call.store<float>(call[1], dc.miter_limit);
+			call.ret(1);
 		});
 	});
 	registry.add("GetArcDirection", 1, [=, this](ApiCall &call) {
@@ -897,16 +950,24 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 	});
 	// The pixels closed polygons cover, row by row at pixel centres: ALTERNATE (even_odd) or WINDING filling over the edges of all of
 	// them together, each polygon closed back to its first point.
-	const auto fill_polygons = [](const std::vector<std::vector<std::array<double, 2>>> &polygons, bool even_odd) {
+	// Path figures recorded in logical coordinates, put through the context's mapping.
+	const auto map_figures = [](std::vector<std::vector<std::array<double, 2>>> &figures, const LogicalMap &map) {
+		if (map.identity())
+			return;
+		for (auto &figure : figures)
+			for (auto &point : figure)
+				point = map(point[0], point[1]);
+	};
+	const auto fill_spans = [](const std::vector<std::vector<std::array<double, 2>>> &polygons, bool even_odd,
+		const std::function<void(int32_t, int32_t, int32_t)> &span) {
 		double min_y = INFINITY, max_y = -INFINITY;
 		for (const auto &polygon : polygons)
 			for (const auto &point : polygon) {
 				min_y = std::min(min_y, point[1]);
 				max_y = std::max(max_y, point[1]);
 			}
-		DesktopRegion region;
 		if (!(min_y < max_y))
-			return region;
+			return;
 		if (max_y - min_y > 16384)
 			throw uint32_t(120);
 		for (int32_t y = int32_t(std::floor(min_y)); y < int32_t(std::ceil(max_y)); ++y) {
@@ -928,10 +989,18 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 					continue;
 				const int32_t from = int32_t(std::ceil(crossings[i].first - 0.5)), to = int32_t(std::ceil(crossings[i + 1].first - 0.5));
 				if (to > from)
-					region.add({from, y, to, y + 1});
+					span(y, from, to);
 			}
 		}
-		return region;
+	};
+	const auto fill_polygons = [fill_spans](const std::vector<std::vector<std::array<double, 2>>> &polygons, bool even_odd) {
+		std::vector<DesktopRect> spans;
+		fill_spans(polygons, even_odd, [&](int32_t y, int32_t from, int32_t to) {
+			if (spans.size() >= size_t(DesktopRegion::max_rectangles))
+				throw std::bad_alloc();
+			spans.push_back({from, y, to, y + 1});
+		});
+		return DesktopRegion::from_rectangles(spans);
 	};
 	registry.add("CreatePolygonRgn", 3, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
@@ -972,10 +1041,8 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 	registry.add("CloseFigure", 1, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			auto &dc = require_dc(call, 0);
-			if (!dc.path || !dc.path->open || dc.path->figures.empty())
+			if (!dc.path || !dc.path->open || !dc.path->close())
 				throw uint32_t(1003);
-			// The next point starts a figure of its own.
-			dc.path->figures.push_back({});
 			call.ret(1);
 		});
 	});
@@ -991,11 +1058,18 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			std::vector<std::vector<std::array<double, 2>>> figures;
 			std::array<double, 2> current{double(dc.position_x), double(dc.position_y)};
 			bool closed = true;
+			// Inside a path bracket the points continue the figure being drawn rather than starting their own.
+			auto *path = dc.path && dc.path->open ? &*dc.path : nullptr;
 			const auto point_at = [&](int32_t index) {
 				const auto point = read_point(call, call[1] + uint64_t(index) * 8);
 				return std::array<double, 2>{double(point.x), double(point.y)};
 			};
 			const auto extend = [&](const std::array<double, 2> &point) {
+				if (path) {
+					path->line(current, point);
+					current = point;
+					return;
+				}
 				if (closed)
 					figures.push_back({current});
 				closed = false;
@@ -1007,6 +1081,8 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 				if (type == 6) {
 					current = point_at(index);
 					closed = true;
+					if (path)
+						path->move(current);
 				} else if (type == 2) {
 					extend(point_at(index));
 				} else if (type == 4 && index + 2 < count && (types[size_t(index) + 1] & ~1) == 4 && (types[size_t(index) + 2] & ~1) == 4) {
@@ -1021,7 +1097,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 				} else {
 					throw uint32_t(87);
 				}
-				if ((types[size_t(index)] & 1) && !closed && !figures.empty()) {
+				if ((types[size_t(index)] & 1) && path) {
+					if (path->drawing) {
+						current = path->figures.back().front();
+						path->close();
+					}
+				} else if ((types[size_t(index)] & 1) && !closed && !figures.empty()) {
 					current = figures.back().front();
 					if (!dc.path || !dc.path->open)
 						figures.back().push_back(current);
@@ -1030,11 +1111,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			}
 			dc.position_x = int32_t(std::lround(current[0]));
 			dc.position_y = int32_t(std::lround(current[1]));
-			if (dc.path && dc.path->open) {
-				if (!dc.path->figures.empty() && dc.path->figures.back().empty())
-					dc.path->figures.pop_back();
-				for (auto &figure : figures)
-					dc.path->figures.push_back(std::move(figure));
+			if (path) {
 				call.ret(1);
 				return;
 			}
@@ -1057,21 +1134,30 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			auto &dc = require_dc(call, 0);
 			if (!dc.path || dc.path->open)
 				throw uint32_t(1003);
-			const auto figures = std::move(dc.path->figures);
+			auto figures = std::move(dc.path->figures);
+			const auto closed = std::move(dc.path->closed);
 			dc.path.reset();
+			const auto map = logical_map(dc);
+			map_figures(figures, map);
 			Painter painter(objects, dc);
 			if (fill) {
 				const auto &brush = selected_brush(objects, dc);
-				for (const auto &box : fill_polygons(figures, dc.poly_fill != 2).rectangles())
-					painter.fill(box.left, box.top, box.right, box.bottom, brush);
+				// Painted span by span: a large or detailed shape (print resolution) has far more spans than a region may hold.
+				fill_spans(figures, dc.poly_fill != 2, [&](int32_t y, int32_t from, int32_t to) { painter.fill(from, y, to, y + 1, brush); });
 			}
 			if (stroke)
-				for (const auto &figure : figures) {
+				for (size_t index = 0; index < figures.size(); ++index) {
+					const auto &figure = figures[index];
 					std::vector<std::pair<int32_t, int32_t>> points;
 					for (const auto &point : figure)
 						points.push_back({int32_t(std::lround(point[0])), int32_t(std::lround(point[1]))});
-					if (points.size() > 1)
-						painter.polyline(points, selected_pen(objects, dc), true);
+					if (points.size() > 1) {
+						// A geometric pen's width is in logical units, so it grows with the mapping.
+						auto pen = selected_pen(objects, dc);
+						if (pen.geometric && !map.identity())
+							pen.width = std::max<int32_t>(1, int32_t(std::lround(pen.width * map.scale())));
+						painter.polyline(points, pen, index < closed.size() && closed[index]);
+					}
 				}
 			if (painter.changed())
 				touched(dc);
@@ -1089,6 +1175,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 				throw uint32_t(1003);
 			auto figures = std::move(dc.path->figures);
 			dc.path.reset();
+			map_figures(figures, logical_map(dc));
 			const double dx = double(dc.viewport_org_x) - dc.window_org_x, dy = double(dc.viewport_org_y) - dc.window_org_y;
 			for (auto &figure : figures)
 				for (auto &point : figure) {
@@ -1110,6 +1197,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 				throw uint32_t(1003);
 			auto figures = std::move(dc.path->figures);
 			dc.path.reset();
+			map_figures(figures, logical_map(dc));
 			const double dx = double(dc.viewport_org_x) - dc.window_org_x, dy = double(dc.viewport_org_y) - dc.window_org_y;
 			for (auto &figure : figures)
 				for (auto &point : figure) {
@@ -1286,6 +1374,37 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(1);
 		});
 	});
+	// PolyBezierTo(dc, points, count): cubic Beziers from the current position, three points each, which then ends at the last point;
+	// PolyBezier(dc, points, count) starts at its first point and leaves the current position alone. Both are PolyDraw with the point
+	// types filled in.
+	for (const bool to : {true, false})
+		registry.add(to ? "PolyBezierTo" : "PolyBezier", 3, [=, this, &registry](ApiCall &call) {
+			const uint32_t count = call.u32(2);
+			if (!call[1] || (to ? count % 3 : count < 1 || (count - 1) % 3) || count > 65536) {
+				call.fail(87);
+				return;
+			}
+			auto *dc = objects.dc(call[0]);
+			if (!dc) {
+				call.fail(6);
+				return;
+			}
+			const int32_t x = dc->position_x, y = dc->position_y;
+			std::vector<uint8_t> types(count, 4);
+			if (!to)
+				types[0] = 6;
+			const auto scratch = process.map_memory((count + 4095) & ~size_t(4095), PROT_READ | PROT_WRITE);
+			process.write_memory(scratch, types);
+			ApiCall inner(call.process, call.environment, {call[0], call[1], scratch, count});
+			registry.find("PolyDraw")->second(inner);
+			process.unmap_memory(scratch);
+			if (!to)
+				if (auto *again = objects.dc(call[0])) {
+					again->position_x = x;
+					again->position_y = y;
+				}
+			call.ret(inner.result);
+		});
 	registry.add("PolylineTo", 3, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			auto &dc = require_dc(call, 0);
@@ -1293,6 +1412,14 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			if (points.empty())
 				throw uint32_t(87);
 			points.insert(points.begin(), {dc.position_x, dc.position_y});
+			if (dc.path && dc.path->open) {
+				for (size_t i = 1; i < points.size(); ++i)
+					dc.path->line({double(points[i - 1].first), double(points[i - 1].second)}, {double(points[i].first), double(points[i].second)});
+				dc.position_x = points.back().first;
+				dc.position_y = points.back().second;
+				call.ret(1);
+				return;
+			}
 			Painter painter(objects, dc);
 			painter.polyline(points, selected_pen(objects, dc), false);
 			dc.position_x = points.back().first;
@@ -1323,9 +1450,28 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(1);
 		});
 	});
+	// MoveToEx(dc, x, y, previous): the current position, which inside a path bracket starts a new figure.
+	registry.add("MoveToEx", 4, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			auto &dc = require_dc(call, 0);
+			write_point(call, call[3], dc.position_x, dc.position_y);
+			dc.position_x = call.i32(1);
+			dc.position_y = call.i32(2);
+			if (dc.path && dc.path->open)
+				dc.path->move({double(dc.position_x), double(dc.position_y)});
+			call.ret(1);
+		});
+	});
 	registry.add("LineTo", 3, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			auto &dc = require_dc(call, 0);
+			if (dc.path && dc.path->open) {
+				dc.path->line({double(dc.position_x), double(dc.position_y)}, {double(call.i32(1)), double(call.i32(2))});
+				dc.position_x = call.i32(1);
+				dc.position_y = call.i32(2);
+				call.ret(1);
+				return;
+			}
 			Painter painter(objects, dc);
 			Painter::Stroke stroke;
 			painter.line(dc.position_x, dc.position_y, call.i32(1), call.i32(2), selected_pen(objects, dc), false, stroke);
@@ -1773,63 +1919,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		call.fail(120, 0);
 	});
 
-	// ---- printing is not provided ----
-	// With no printers there is no default one.
-	for (const auto *name : {"GetDefaultPrinterA", "GetDefaultPrinterW"})
-		registry.add(name, 2, [=, this](ApiCall &call) {
-			call.fail(2, 0);
-		});
-	for (const auto *name : {"StartDocW", "StartDocA", "EndDoc", "StartPage", "EndPage", "AbortDoc"})
-		registry.add(name, 2, [](ApiCall &call) { call.fail(120, 0); });
-	// The spooler answers as on a Windows with no printer installed. EnumPrinters(flags, name, level, buffer, size, needed, returned)
-	// lists none: nothing is needed and nothing returned, for any of the printer info levels.
-	for (const auto *name : {"EnumPrintersW", "EnumPrintersA"})
-		registry.add(name, 7, [](ApiCall &call) {
-			const uint32_t level = call.u32(2);
-			if (level != 1 && level != 2 && level != 4 && level != 5) {
-				call.fail(124, 0);
-				return;
-			}
-			if (!call[5] || !call[6]) {
-				call.fail(1780, 0);
-				return;
-			}
-			call.store<uint32_t>(call[5], 0);
-			call.store<uint32_t>(call[6], 0);
-			call.ret(1);
-		});
-	// No printer can be opened, so no printer handle exists: OpenPrinter fails with ERROR_INVALID_PRINTER_NAME and a null handle, and
-	// what takes a printer handle finds an invalid one. What names a printer, DocumentProperties and DeviceCapabilities, answers -1.
-	for (const auto *name : {"OpenPrinterW", "OpenPrinterA"})
-		registry.add(name, 3, [](ApiCall &call) {
-			if (call[1])
-				call.store_pointer(call[1], 0);
-			call.fail(1801, 0);
-		});
-	registry.add("ClosePrinter", 1, [](ApiCall &call) { call.fail(6, 0); });
-	for (const auto *name : {"GetPrinterW", "GetPrinterA"})
-		registry.add(name, 5, [](ApiCall &call) {
-			if (call[4])
-				call.store<uint32_t>(call[4], 0);
-			call.fail(6, 0);
-		});
-	for (const auto *name : {"GetPrinterDriverW", "GetPrinterDriverA"})
-		registry.add(name, 6, [](ApiCall &call) {
-			if (call[5])
-				call.store<uint32_t>(call[5], 0);
-			call.fail(6, 0);
-		});
-	// GetPrinterData answers its error as the return value.
-	for (const auto *name : {"GetPrinterDataW", "GetPrinterDataA"})
-		registry.add(name, 6, [](ApiCall &call) {
-			if (call[5])
-				call.store<uint32_t>(call[5], 0);
-			call.ret(6);
-		});
-	for (const auto *name : {"DocumentPropertiesW", "DocumentPropertiesA"})
-		registry.add(name, 6, [](ApiCall &call) { call.fail(1801, uint64_t(int64_t(-1))); });
-	for (const auto *name : {"DeviceCapabilitiesW", "DeviceCapabilitiesA"})
-		registry.add(name, 5, [](ApiCall &call) { call.fail(1801, uint64_t(uint32_t(-1))); });
+	register_print_api(registry);
 	registry.add("GdiGetCodePage", 1, [](ApiCall &call) { call.ret(1252); });
 }
 

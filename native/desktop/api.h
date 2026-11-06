@@ -19,6 +19,8 @@ public:
 	void register_gdi_api(ApiRegistry &registry);
 	void register_text_api(ApiRegistry &registry);
 	void register_image_api(ApiRegistry &registry);
+	// The spooler and printer contexts, printing to the host's CUPS printers (printing.cpp).
+	void register_print_api(ApiRegistry &registry);
 	void set_host_files(std::function<std::optional<std::vector<uint8_t>>(std::u16string_view)> read) { read_host_file=std::move(read); }
 	static std::span<const std::string_view> user_exports();
 	static std::span<const std::string_view> gdi_exports();
