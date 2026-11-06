@@ -659,6 +659,7 @@ void NativeDesktop::register_print_api(ApiRegistry &registry)
 			throw uint32_t(8);
 		}
 		select(dc, bitmap);
+		objects.dc(dc)->printer = true;
 		Job job;
 		job.printer = printer.name;
 		job.settings = settings;

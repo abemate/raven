@@ -139,6 +139,9 @@ struct DesktopDC {
 	int32_t brush_org_x=0,brush_org_y=0,window_org_x=0,window_org_y=0,viewport_org_x=0,viewport_org_y=0;
 	// Window and viewport origins move logical coordinates; this offset is what they contributed to origin_x and origin_y.
 	int32_t user_dx=0,user_dy=0;
+	// A printer's context (CreateDCW/CreateICW on a printer): its capabilities are the printer's, so the guest's fast answers for
+	// display contexts (LOGPIXELS 96, TECHNOLOGY DT_RASDISPLAY) must not serve it.
+	bool printer=false;
 	// GM_COMPATIBLE until SetGraphicsMode; the world transform (XFORM order) is kept for programs that read it back, and drawing
 	// does not apply it.
 	uint32_t graphics_mode=1;
