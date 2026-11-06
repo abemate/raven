@@ -1712,11 +1712,8 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			const uint32_t table = rop >> 16 & 0xff;
 			const DesktopBrush *brush = (table ^ table >> 4) & 0x0f ? &selected_brush(objects, dc) : nullptr;
 			const int64_t brush_x = int64_t(dc.origin_x) - dc.user_dx + dc.brush_org_x, brush_y = int64_t(dc.origin_y) - dc.user_dy + dc.brush_org_y;
-			for (int64_t row = 0; row < abs_dh; ++row)
-				for (int64_t column = 0; column < abs_dw; ++column) {
-					const int64_t device_x = dest_left + column + dc.origin_x, device_y = dest_top + row + dc.origin_y;
-					if (!painter.visible(device_x, device_y))
-						continue;
+			// One destination pixel: `column` and `row` count logical units into the destination rectangle.
+			const auto paint = [&](int64_t device_x, int64_t device_y, int64_t column, int64_t row) {
 					const int64_t scaled_x = abs_dw == abs_sw ? column : column * abs_sw / abs_dw;
 					const int64_t scaled_y = abs_dh == abs_sh ? row : row * abs_sh / abs_dh;
 					const int64_t image_x = sx + (flip_x ? abs_sw - 1 - scaled_x : scaled_x);
@@ -1724,7 +1721,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 					// Rows of a top-down DIB use sy as the first line; rows of a bottom-up DIB count up from the bottom.
 					const int64_t image_y = top_down ? sy + image_row : image.height - 1 - (sy + (abs_sh - 1 - image_row));
 					if (image_x < 0 || image_x >= image.width || image_y < 0 || image_y >= image.height)
-						continue;
+						return;
 					const uint32_t source_pixel = image.pixels[size_t(image_y) * image.width + size_t(image_x)];
 					if (rop != srccopy) {
 						// Other raster operations combine the image with what is there; a surface with an alpha byte combines that too.
@@ -1742,14 +1739,47 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 						painter.plot(device_x, device_y, result, 13);
 						if (target)
 							target[3] = alpha;
-						continue;
+						return;
 					}
 					painter.plot(device_x, device_y, colorref(source_pixel & 0xffffff), 13);
 					// A DIB section keeps the alpha channel of what is copied into it.
 					if (painter.bitmap.dib_section && painter.bitmap.depth == 32 && image.has_alpha)
 						if (auto *target = painter.pixel_pointer(device_x, device_y))
 							target[3] = uint8_t(source_pixel >> 24);
+			};
+			const auto map = logical_map(dc);
+			if (map.identity()) {
+				for (int64_t row = 0; row < abs_dh; ++row)
+					for (int64_t column = 0; column < abs_dw; ++column) {
+						const int64_t device_x = dest_left + column + dc.origin_x, device_y = dest_top + row + dc.origin_y;
+						if (painter.visible(device_x, device_y))
+							paint(device_x, device_y, column, row);
+					}
+			} else {
+				// A scaled, rotated or mirrored mapping: every device pixel the mapped rectangle covers takes the logical point at its
+				// centre, so the image is resampled once at device resolution however large the logical rectangle is.
+				double low_x = 1e300, low_y = 1e300, high_x = -1e300, high_y = -1e300;
+				for (const auto &[x, y] : {std::pair{0.0, 0.0}, {double(abs_dw), 0.0}, {0.0, double(abs_dh)}, {double(abs_dw), double(abs_dh)}}) {
+					const auto point = map(double(dest_left) + x, double(dest_top) + y);
+					low_x = std::min(low_x, point[0]);
+					low_y = std::min(low_y, point[1]);
+					high_x = std::max(high_x, point[0]);
+					high_y = std::max(high_y, point[1]);
 				}
+				const int64_t first_x = std::max<int64_t>(int64_t(std::floor(low_x)), -dc.origin_x - 1), last_x = std::min<int64_t>(int64_t(std::ceil(high_x)), int64_t(painter.bitmap.width) - dc.origin_x + 1);
+				const int64_t first_y = std::max<int64_t>(int64_t(std::floor(low_y)), -dc.origin_y - 1), last_y = std::min<int64_t>(int64_t(std::ceil(high_y)), int64_t(painter.bitmap.height) - dc.origin_y + 1);
+				for (int64_t y = first_y; y < last_y; ++y)
+					for (int64_t x = first_x; x < last_x; ++x) {
+						const int64_t device_x = x + dc.origin_x, device_y = y + dc.origin_y;
+						if (!painter.visible(device_x, device_y))
+							continue;
+						const auto logical = map.inverse(double(x) + 0.5, double(y) + 0.5);
+						const double column = std::floor(logical[0] - double(dest_left)), row = std::floor(logical[1] - double(dest_top));
+						if (column < 0 || row < 0 || column >= double(abs_dw) || row >= double(abs_dh))
+							continue;
+						paint(device_x, device_y, int64_t(column), int64_t(row));
+					}
+			}
 			if (painter.changed())
 				touched(dc);
 			call.ret(uint64_t(abs_dh));
