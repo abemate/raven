@@ -1889,7 +1889,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	// GetTempFileName: a zero unique value picks a free name and creates the file; any other value only forms the name.
 	registry.add("GetTempFileNameW", 4, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto directory = call.wide(call[0]);
-		auto prefix = call.wide(call[1]);
+		// No prefix is allowed: the name is then only the number.
+		auto prefix = call[1] ? call.wide(call[1]) : std::u16string();
 		if (prefix.size() > 3)
 			prefix.resize(3);
 		const uint32_t requested = call.u32(2) & 0xffff;
