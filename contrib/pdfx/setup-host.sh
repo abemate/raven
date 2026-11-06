@@ -68,7 +68,8 @@ fi
 
 step "Installing the pdfx command and the menu entry"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
-sed "s|^RAVEN=\${RAVEN:-.*}|RAVEN=\${RAVEN:-$build/native/raven}|" contrib/pdfx/pdfx > "$HOME/.local/bin/pdfx"
+commit=$(git -C "$repo" log -1 --format='%h %cs' 2>/dev/null || echo unknown)
+sed -e "s|^RAVEN=\${RAVEN:-.*}|RAVEN=\${RAVEN:-$build/native/raven}|" -e "s|^PDFX_BUILD=unknown|PDFX_BUILD='$commit'|" contrib/pdfx/pdfx > "$HOME/.local/bin/pdfx"
 install -m755 contrib/pdfx/pdfx-print "$HOME/.local/bin/pdfx-print"
 chmod 755 "$HOME/.local/bin/pdfx"
 sed "s|^Exec=pdfx|Exec=$HOME/.local/bin/pdfx|" contrib/pdfx/pdfx.desktop > "$HOME/.local/share/applications/pdfx-raven.desktop"
