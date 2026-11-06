@@ -1157,6 +1157,9 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 		const auto found=state->surfaces.find(handle);
 		if (found==state->surfaces.end() || !state->seat || found->second->is_popup || !found->second->role) return;
 		// A click on the caption that is already over moves nothing; the next press must not become a move.
+		if (std::getenv("RAVEN_TRACE_MSG"))
+			fprintf(stderr,"interactive %llx action %u buttons %u held %zu maximized %d press %u last %u\n",(unsigned long long)handle,action,
+				state->buttons_down,state->held.size(),found->second->maximized ? 1 : 0,state->press_serial,state->last_serial);
 		// A drag on the frame the user already let go of starts nothing: the compositor would begin a move or resize that only the
 		// next click ends, and that click would be lost. Only the window menu's Move (action 0) waits for the next press.
 		if (!state->buttons_down) {
