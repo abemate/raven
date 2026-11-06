@@ -101,6 +101,8 @@ struct WaylandPresentation::State {
 		bool grabbed=false;
 		// The window's frames carry alpha (see DesktopPresentation::translucent).
 		bool translucent=false;
+		// The owner's toplevel this one was last made a child of (xdg_toplevel_set_parent), which keeps it above the owner.
+		xdg_toplevel *parent_role=nullptr;
 		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false;
 		// The compositor maximized or restored the window itself (state_changed), and when Raven last asked it to.
 		bool state_changed=false;
@@ -967,6 +969,26 @@ struct WaylandPresentation::State {
 		wl_display_flush(display);
 	}
 
+	// The top-level window that owns each window (see DesktopPresentation::transient_for).
+	std::map<uint64_t,uint64_t> owners;
+	// The owner's toplevel a window should be the child of: none when the owner shows no toplevel of its own.
+	xdg_toplevel *owner_role(uint64_t handle) {
+		const auto owner=owners.find(handle);
+		if (owner==owners.end()) return nullptr;
+		const auto found=surfaces.find(owner->second);
+		return found!=surfaces.end() && found->second->role && !found->second->is_popup ? found->second->role : nullptr;
+	}
+	void transient_for(uint64_t handle,uint64_t owner) {
+		if (owner && owner!=handle) owners[handle]=owner; else owners.erase(handle);
+		const auto found=surfaces.find(handle);
+		if (found==surfaces.end() || !found->second->role || found->second->is_popup) return;
+		auto *parent=owner_role(handle);
+		if (found->second->parent_role==parent) return;
+		found->second->parent_role=parent;
+		xdg_toplevel_set_parent(found->second->role,parent);
+		wl_display_flush(display);
+	}
+
 	void maximize(uint64_t handle,bool wanted) {
 		if (wanted) maximized.insert(handle); else maximized.erase(handle);
 		const auto found=surfaces.find(handle);
@@ -1023,6 +1045,8 @@ struct WaylandPresentation::State {
 			xdg_toplevel_add_listener(window->role,&role_listener,window.get());
 			xdg_toplevel_set_title(window->role,std::string(title).c_str());
 			xdg_toplevel_set_app_id(window->role,"raven.native");
+			// An owned window (a dialog) stays above its owner, as on Windows.
+			if ((window->parent_role=owner_role(handle))) xdg_toplevel_set_parent(window->role,window->parent_role);
 			// A floating window starts at its requested size; a maximized one follows the compositor's work area.
 			if (window->maximized) xdg_toplevel_set_maximized(window->role);
 			else {
@@ -1078,11 +1102,15 @@ DesktopPresentation WaylandPresentation::callbacks()
 
 DesktopPresentation WaylandPresentation::make_callbacks()
 {
-	return {[this](uint64_t handle,std::string_view title,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) {
+	DesktopPresentation result{[this](uint64_t handle,std::string_view title,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) {
 		state->present(handle,title,width,height,pixels);
 	},[this](uint64_t handle) {
 		state->maximized.erase(handle);
 		state->translucent.erase(handle);
+		state->owners.erase(handle);
+		// Its children lose their parent with it; the compositor gives them the next one up.
+		if (const auto found=state->surfaces.find(handle);found!=state->surfaces.end() && found->second->role)
+			for (auto &[child,surface] : state->surfaces) if (surface->parent_role==found->second->role) surface->parent_role=nullptr;
 		if (state->pointer_window==handle) state->pointer_window=0;
 		if (state->keyboard_window==handle) state->keyboard_window=0;
 		std::erase_if(state->pending,[&](const DesktopEvent &event) { return event.window==handle; });
@@ -1149,6 +1177,8 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 	[this](uint64_t handle,uint64_t window,int32_t x,int32_t y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels,size_t stride) {
 		state->overlay(handle,window,x,y,width,height,pixels,stride);
 	}};
+	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
+	return result;
 }
 
 }
