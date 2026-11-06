@@ -1117,6 +1117,9 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 	},[this](uint64_t handle,uint32_t action) {
 		const auto found=state->surfaces.find(handle);
 		if (found==state->surfaces.end() || !state->seat || found->second->is_popup || !found->second->role) return;
+		// A click on the caption that is already over moves nothing; the next press must not become a move.
+		if (action==11 && !state->buttons_down) return;
+		if (action==11) action=0;
 		if (action==0 && !state->buttons_down) state->pending_move=handle;
 		else if (action==0) xdg_toplevel_move(found->second->role,state->seat,state->last_serial);
 		else xdg_toplevel_resize(found->second->role,state->seat,state->last_serial,action);

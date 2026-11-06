@@ -915,6 +915,7 @@ struct XcbPresentation::State {
 		if (found==windows.end() || found->second->is_popup || !found->second->id) return;
 		// Edges as the frame names them (top 1, bottom 2, left 4, right 8 and their sums) to the window manager's directions.
 		static constexpr std::array<int32_t,11> directions{8,1,5,-1,7,0,6,-1,3,2,4};
+		if (action==11) action=0;
 		if (action>=directions.size() || directions[action]<0) return;
 		xcb_ungrab_pointer(connection,XCB_CURRENT_TIME);
 		xcb_client_message_event_t message{};

@@ -256,9 +256,10 @@ void NativeWindows::track_pointer(uint64_t window)
 	if (window == tracking.window || objects.is_child(tracking.window, window))
 		return;
 	const auto tracked = tracking.window;
+	const auto flags = tracking.flags;
 	tracking = {};
 	if (std::as_const(objects).window(tracked))
-		post(tracked, 0x2a3, 0, 0);
+		post(tracked, (flags & 0x10) ? 0x2a2 : 0x2a3, 0, 0);
 }
 
 void NativeWindows::register_ext_api(ApiRegistry &registry)

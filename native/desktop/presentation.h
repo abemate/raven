@@ -49,7 +49,8 @@ struct DesktopPresentation {
 	std::function<std::vector<DesktopEvent>(std::chrono::milliseconds)> poll;
 	// Shows or updates a popup anchored at (x, y) of its parent surface, taking a pointer and keyboard grab.
 	std::function<void(uint64_t handle,uint64_t parent,int32_t x,int32_t y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels)> popup;
-	// Hands a pointer drag that began on the frame to the compositor: 0 moves the window, 1..10 resize from that edge.
+	// Hands a pointer drag that began on the frame to the compositor: 0 moves the window (with the next press when no button is down,
+	// as the window menu's Move does), 1..10 resize from that edge, 11 moves it only while the press on the caption is still held.
 	std::function<void(uint64_t handle,uint32_t action)> interactive;
 	// Offers UTF-8 text as the host selection.
 	std::function<void(std::string_view text)> clipboard_publish;

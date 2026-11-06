@@ -1284,7 +1284,26 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 	// Scroll bars and the frame may run a loop of their own that waits for the release, so what was held goes in first.
 	if (hit!=1 && placing_press) release_held_input();
 	if ((hit==6 || hit==7) && scroll_pointer(target,hit,message,int32_t(x),int32_t(y))) return;
-	if (hit!=1) { nonclient_pointer(target,hit,message,int32_t(event.x),int32_t(event.y)); return; }
+	// A pointer over the frame tells the window with the non-client message (WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN, ...) and the hit code, as
+	// on Windows: a program that draws its own caption buttons lights them up from these, and its default procedure handles the frame.
+	if (hit!=1) {
+		if (message>=0x200 && message<=0x209) {
+			if (tracking.window==target && (tracking.flags & 2) && !(tracking.flags & 0x10)) {
+				// The client area's WM_MOUSELEAVE: the pointer is still over the window, but on its frame.
+				tracking={};
+				post(target,0x2a3,0,0);
+			}
+			send(target,message-0x200+0xa0,hit,uint16_t(x)|(uint64_t(uint16_t(y))<<16));
+		} else {
+			nonclient_pointer(target,hit,message,int32_t(event.x),int32_t(event.y));
+		}
+		return;
+	}
+	if (tracking.window==target && (tracking.flags & 0x12)==0x12) {
+		// WM_NCMOUSELEAVE: the pointer went from the frame into the client area.
+		tracking={};
+		post(target,0x2a2,0,0);
+	}
 	// A second press of the same button on the same window within the double-click time (500 ms) and rectangle (SM_CXDOUBLECLK, 4 by 4)
 	// is a double click when the window's class asks for them (CS_DBLCLKS); the press after a double click starts over.
 	if (message==0x201 || message==0x204 || message==0x207) {
@@ -1736,6 +1755,14 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		}
 		return 0;
 	}
+	// WM_NCMOUSEMOVE .. WM_NCMBUTTONDBLCLK: the frame's own handling (caption drag, caption buttons, window menu, menu bar).
+	if (message>=0xa0 && message<=0xa9) {
+		const auto *root=std::as_const(objects).window(objects.window_root(args[0]));
+		if (!root) return 0;
+		const int32_t x=int16_t(uint16_t(args[3])),y=int16_t(uint16_t(args[3]>>16));
+		nonclient_pointer(args[0],args[2],message-0xa0+0x200,x-root->outer.left,y-root->outer.top);
+		return 0;
+	}
 	if (message==0x205) {
 		const auto x=uint16_t(int64_t(window->x)+int16_t(uint16_t(args[3])));
 		const auto y=uint16_t(int64_t(window->y)+int16_t(uint16_t(args[3]>>16)));
@@ -1902,7 +1929,7 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	// Messages whose Windows default is "no action, result 0": activation notices, window-position notices,
 	// non-client mouse notices, capture loss, keyboard and timer/command traffic nobody consumed.
 	if (message==0x16 || message==0x1c || message==0x24 || message==0x46 || message==0x47 || message==0x4e ||
-		message==0x7f || message==0x80 || (message>=0xa0 && message<=0xa9) || message==0x215 || (message>=0x100 && message<=0x109) ||
+		message==0x7f || message==0x80 || message==0x215 || (message>=0x100 && message<=0x109) ||
 		message==0x111 || message==0x113 || (message>=0x116 && message<=0x120) || message==0x211 || message==0x212) return 0;
 	// Every other message has no default action in DefWindowProc and answers zero.
 	return 0;

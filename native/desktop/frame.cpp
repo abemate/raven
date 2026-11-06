@@ -122,6 +122,7 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 		return;
 	}
 	if (message==0x201) {
+		if (std::getenv("RAVEN_TRACE_MSG")) fprintf(stderr,"frame press %llx hit %llu style %x\n",(unsigned long long)handle,(unsigned long long)hit,window->style);
 		pressed_frame_hit=hit; pressed_frame_window=handle;
 		// A drag that starts on the caption or a sizing border continues in the compositor (maximized windows do not move).
 		// A tool window shown on its owner is moved here: the compositor moves only the host windows it places itself.
@@ -129,11 +130,13 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 			frame_drag={handle,cursor_x,cursor_y,window->outer};
 			return;
 		}
-		if (presentation.interactive && !(window->style & 0x01000000U)) {
+		if (presentation.interactive && !window->parent) {
 			// Hit codes 10..17 are the sizing borders: left, right, top, top-left, top-right, bottom, bottom-left, bottom-right.
+			// A maximized window is not sized, but its caption can be dragged: the desktop restores it once the pointer moves, as
+			// Windows does.
 			static constexpr uint32_t edges[]{4,8,1,5,9,2,6,10};
-			if (hit==2) { presentation.interactive(handle,0); return; }
-			if (hit>=10 && hit<=17) { presentation.interactive(handle,edges[hit-10]); return; }
+			if (hit==2) { presentation.interactive(handle,11); return; }
+			if (hit>=10 && hit<=17 && !(window->style & 0x01000000U)) { presentation.interactive(handle,edges[hit-10]); return; }
 		}
 		if (hit==menu_hit) {
 			const auto rects=menu_bar_items(*window);
