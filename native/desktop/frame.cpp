@@ -58,7 +58,15 @@ uint64_t NativeWindows::nonclient_hit(const DesktopWindow &window,int32_t x,int3
 	if (x<outer.left || y<outer.top || x>=outer.right || y>=outer.bottom) return nowhere;
 	if (x>=window.x && y>=window.y && int64_t(x)<int64_t(window.x)+window.width && int64_t(y)<int64_t(window.y)+window.height) return client;
 	const auto layout=frame_layout(window);
-	const int32_t px=x-outer.left,py=y-outer.top;
+	int32_t px=x-outer.left,py=y-outer.top;
+	// A maximized window is not sized: its borders sit at the screen edges, where Windows keeps them off screen. A point on them
+	// counts as the part of the frame just inside, so the screen's top-right corner is the close button and its top edge the caption.
+	const bool maximized=(window.style & 0x01000000U)!=0;
+	if (maximized) {
+		const int32_t width=outer.right-outer.left,height=outer.bottom-outer.top;
+		px=std::clamp(px,std::min(layout.border,width-1),std::max(width-layout.border-1,0));
+		py=std::clamp(py,std::min(layout.border,height-1),std::max(height-layout.border-1,0));
+	}
 	const auto inside=[&](DesktopRect rect) { return px>=rect.left && px<rect.right && py>=rect.top && py<rect.bottom; };
 	if (inside(layout.close)) return close;
 	if (inside(layout.maximize)) return maximize;
@@ -66,7 +74,7 @@ uint64_t NativeWindows::nonclient_hit(const DesktopWindow &window,int32_t x,int3
 	if (layout.caption_height && (window.style & 0x80000U) && inside(layout.icon)) return system_menu;
 	if (layout.caption_height && inside({layout.caption.left,layout.caption.top,layout.caption.right,layout.caption.bottom+1})) return caption;
 	if (layout.menu_height && inside(layout.menu_bar)) return menu;
-	if (window.style & 0x40000U) {
+	if ((window.style & 0x40000U) && !maximized) {
 		const int32_t width=outer.right-outer.left,height=outer.bottom-outer.top,corner=layout.border*2+8;
 		const bool west=px<layout.border,east=px>=width-layout.border,north=py<layout.border,south=py>=height-layout.border;
 		if (north && px<corner) return top_left;
