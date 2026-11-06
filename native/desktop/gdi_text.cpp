@@ -132,6 +132,44 @@ std::u16string_view style_of(const InstalledFamily &family)
 	return family.italic ? u"Italic" : u"Regular";
 }
 
+// The styles a family has, as EnumFontFamiliesEx lists them when a program names the family: the usual Windows faces have those of the
+// faces that stand for them (Arial's four from Liberation Sans, say), an installed family every face installed under its name.
+std::vector<InstalledFamily> family_styles(const InstalledFamily &family)
+{
+	static const char16_t *const four[] = {u"Arial", u"Times New Roman", u"Courier New", u"Verdana", u"Segoe UI", u"Consolas"};
+	static const char16_t *const two[] = {u"Tahoma"};
+	std::vector<InstalledFamily> styles;
+	const auto add = [&](uint32_t weight, bool italic) {
+		auto style = family;
+		style.weight = weight;
+		style.italic = italic;
+		styles.push_back(style);
+	};
+	if (std::any_of(std::begin(four), std::end(four), [&](const char16_t *name) { return equal_fold(family.name, name); })) {
+		add(400, false), add(700, false), add(400, true), add(700, true);
+		return styles;
+	}
+	if (std::any_of(std::begin(two), std::end(two), [&](const char16_t *name) { return equal_fold(family.name, name); })) {
+		add(400, false), add(700, false);
+		return styles;
+	}
+	for (const auto &installed : installed_font_styles(family.name))
+		add(installed.weight, installed.italic);
+	if (styles.empty())
+		styles.push_back(family);
+	std::stable_sort(styles.begin(), styles.end(), [](const InstalledFamily &a, const InstalledFamily &b) {
+		return a.italic != b.italic ? !a.italic : a.weight < b.weight;
+	});
+	return styles;
+}
+
+// A style's full name: the family's, with the style after it unless it is the regular one ("Arial Bold").
+std::u16string full_name_of(const InstalledFamily &style)
+{
+	const auto kind = style_of(style);
+	return kind == u"Regular" ? style.name : style.name + u" " + std::u16string(kind);
+}
+
 // The character sets a face covers, from the code page bits of its OS/2 table in the order TranslateCharsetInfo gives them, each with
 // the script name EnumFontFamiliesEx reports. A symbol font has the symbol set alone; a face that claims none is Western.
 struct FontScript {
@@ -245,6 +283,121 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		else if (align & 8)
 			y -= metrics.height;
 		const int64_t device_x = int64_t(x) + dc.origin_x, device_y = int64_t(y) + dc.origin_y;
+		// A context that scales or transforms its logical space (a mapping mode, a world transform: a printer page, say) draws the run at
+		// the size it takes on the device, and every device pixel the run covers reads the rendered run at the logical point it maps from.
+		if (const auto map = logical_map(dc); !map.identity()) {
+			if (units.empty() || advance == 0)
+				return advance;
+			const double scale = std::clamp(map.scale(), 1.0 / 64, 64.0);
+			auto scaled = font.definition;
+			int32_t height = 0, width = 0;
+			std::memcpy(&height, scaled.data(), 4);
+			std::memcpy(&width, scaled.data() + 4, 4);
+			if (!height)
+				height = -(metrics.height - metrics.internal_leading);
+			int32_t scaled_height = int32_t(std::clamp<double>(std::lround(height * scale), -4000, 4000));
+			if (!scaled_height)
+				scaled_height = height < 0 ? -1 : 1;
+			const int32_t scaled_width = int32_t(std::clamp<double>(std::lround(width * scale), -4000, 4000)), upright = 0;
+			std::memcpy(scaled.data(), &scaled_height, 4);
+			std::memcpy(scaled.data() + 4, &scaled_width, 4);
+			std::memcpy(scaled.data() + 8, &upright, 4);
+			std::memcpy(scaled.data() + 12, &upright, 4);
+			const auto large = objects.text().logical_metrics(scaled);
+			std::vector<int32_t> scaled_offsets;
+			for (const auto offset : offsets)
+				scaled_offsets.push_back(int32_t(std::lround(offset * scale)));
+			const int32_t scaled_advance = std::max<int32_t>(1, int32_t(std::lround(std::abs(advance) * scale)));
+			const int32_t margin = 4;
+			const uint32_t box_width = uint32_t(std::min<int64_t>(int64_t(scaled_advance) + 2 * margin + 2 * large.height, 16384));
+			const uint32_t box_height = uint32_t(std::min<int64_t>(int64_t(large.height) + 4, 16384));
+			std::vector<uint8_t> coverage;
+			try {
+				if (glyphs)
+					coverage = objects.text().render_glyphs(scaled, units, box_width, box_height, margin, 2, scaled_offsets);
+				else
+					coverage = objects.text().render(scaled, units, box_width, box_height, margin, 2, scaled_offsets);
+			} catch (const uint32_t &) {
+				return advance;
+			}
+			if (coverage.size() < size_t(box_width) * box_height)
+				return advance;
+			const bool underline = font.definition[21] != 0, strike = font.definition[22] != 0;
+			const int32_t thickness = std::max(1, int32_t(std::lround(large.height / 16.0)));
+			const auto rule = [&](int32_t line_y) {
+				for (int32_t t = 0; t < thickness; ++t)
+					for (int32_t dx = 0; dx < scaled_advance; ++dx) {
+						const int64_t row = 2 + line_y + t, column = margin + dx;
+						if (row >= 0 && row < box_height && column >= 0 && column < box_width)
+							coverage[size_t(row) * box_width + size_t(column)] = 255;
+					}
+			};
+			if (underline)
+				rule(large.ascent + std::max(1, large.descent / 3));
+			if (strike)
+				rule(large.ascent * 3 / 5);
+			// The box in logical units: its corner, and how far one box pixel reaches. lfEscapement turns it about the reference point.
+			const double pivot_lx = double(pivot_x - dc.origin_x), pivot_ly = double(pivot_y - dc.origin_y);
+			// Vertical alignment from the metrics at the drawn size: a tiny logical font a transform enlarges rounds its own away.
+			const double cell_top = (align & 24) == 24 ? pivot_ly - large.ascent / scale : (align & 8) ? pivot_ly - large.height / scale : double(y);
+			const double left = double(x) - margin / scale, top = cell_top - 2 / scale;
+			const double angle = escapement * 3.14159265358979323846 / 1800.0, cosine = std::cos(angle), sine = std::sin(angle);
+			const auto turned = [&](double lx, double ly) {
+				const double u = lx - pivot_lx, v = ly - pivot_ly;
+				return std::array<double, 2>{pivot_lx + u * cosine + v * sine, pivot_ly + v * cosine - u * sine};
+			};
+			double low_x = 1e300, low_y = 1e300, high_x = -1e300, high_y = -1e300;
+			for (const auto &corner : {std::array<double, 2>{left, top}, {left + box_width / scale, top}, {left, top + box_height / scale},
+					{left + box_width / scale, top + box_height / scale}}) {
+				const auto rotated = turned(corner[0], corner[1]);
+				const auto device = map(rotated[0], rotated[1]);
+				low_x = std::min(low_x, device[0]), high_x = std::max(high_x, device[0]);
+				low_y = std::min(low_y, device[1]), high_y = std::max(high_y, device[1]);
+			}
+			const auto sample = [&](double column, double row) -> uint32_t {
+				const auto c0 = int64_t(std::floor(column)), r0 = int64_t(std::floor(row));
+				const double across = column - double(c0), down = row - double(r0);
+				const auto at = [&](int64_t c, int64_t r) -> double {
+					return c >= 0 && r >= 0 && c < box_width && r < box_height ? coverage[size_t(r) * box_width + size_t(c)] : 0;
+				};
+				return uint32_t(std::lround(at(c0, r0) * (1 - across) * (1 - down) + at(c0 + 1, r0) * across * (1 - down) +
+					at(c0, r0 + 1) * (1 - across) * down + at(c0 + 1, r0 + 1) * across * down));
+			};
+			const uint32_t color = dc.text_color;
+			const int64_t first_x = std::max<int64_t>(int64_t(std::floor(low_x)), -int64_t(dc.origin_x) - 1);
+			const int64_t last_x = std::min<int64_t>(int64_t(std::ceil(high_x)), int64_t(painter.bitmap.width) - dc.origin_x + 1);
+			const int64_t first_y = std::max<int64_t>(int64_t(std::floor(low_y)), -int64_t(dc.origin_y) - 1);
+			const int64_t last_y = std::min<int64_t>(int64_t(std::ceil(high_y)), int64_t(painter.bitmap.height) - dc.origin_y + 1);
+			for (int64_t py = first_y; py <= last_y; ++py)
+				for (int64_t px = first_x; px <= last_x; ++px) {
+					const int64_t device_px = px + dc.origin_x, device_py = py + dc.origin_y;
+					if (!painter.visible(device_px, device_py))
+						continue;
+					const auto logical = map.inverse(double(px) + 0.5, double(py) + 0.5);
+					// Back through lfEscapement: the inverse turn about the reference point.
+					const double u = logical[0] - pivot_lx, v = logical[1] - pivot_ly;
+					const double lx = pivot_lx + u * cosine - v * sine, ly = pivot_ly + u * sine + v * cosine;
+					if (clip_rect && (options & 4) && (lx < clip_rect->left || lx >= clip_rect->right || ly < clip_rect->top || ly >= clip_rect->bottom))
+						continue;
+					const double column = (lx - left) * scale - 0.5, row = (ly - top) * scale - 0.5;
+					if (column < -1 || row < -1 || column > box_width || row > box_height)
+						continue;
+					const auto alpha = std::min<uint32_t>(sample(column, row), 255);
+					if (!alpha)
+						continue;
+					if (alpha >= 250 || painter.bitmap.depth == 1) {
+						painter.plot(device_px, device_py, color, 13);
+						continue;
+					}
+					const uint32_t below = painter.read(device_px, device_py);
+					const auto mix = [&](uint32_t foreground, uint32_t background) { return (foreground * alpha + background * (255 - alpha) + 127) / 255; };
+					painter.plot(device_px, device_py, mix(color_red(color), color_red(below)) | mix(color_green(color), color_green(below)) << 8 |
+						mix(color_blue(color), color_blue(below)) << 16, 13);
+				}
+			if (painter.changed() && dc.window && dc.leased && updated)
+				updated(dc.window);
+			return advance;
+		}
 		DesktopRect clip{INT32_MIN, INT32_MIN, INT32_MAX, INT32_MAX};
 		if (clip_rect && (options & 4))
 			clip = *clip_rect;
@@ -1111,9 +1264,11 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			const auto scratch_size = uint64_t(4096);
 			const auto scratch = process.map_memory(scratch_size, PROT_READ | PROT_WRITE);
 			try {
-				for (const auto &family : families) {
-					if (!wanted.empty() && lower(family.name) != lower(wanted))
+				for (const auto &listed : families) {
+					if (!wanted.empty() && lower(listed.name) != lower(wanted))
 						continue;
+					// Named, a family lists each of its styles; enumerating every family gives one face of each, as Windows does.
+					for (const auto &family : wanted.empty() ? std::vector<InstalledFamily>{listed} : family_styles(listed)) {
 					for (const auto &script : enumerated_scripts(family, charset, call[4] == once_marker)) {
 						// ENUMLOGFONTEXW (LOGFONTW, full name, style, script) followed by NEWTEXTMETRICEXW.
 						std::vector<uint8_t> record(512, 0);
@@ -1125,7 +1280,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 							}
 						};
 						put_text(28, family.name, 31);
-						put_text(92, family.name, 63);
+						put_text(92, full_name_of(family), 63);
 						put_text(92 + 128, style_of(family), 31);
 						put_text(92 + 192, script.script, 31);
 						call.write(scratch, record);
@@ -1136,6 +1291,9 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 						result = outcome.value;
 						if (!uint32_t(outcome.value))
 							break;
+					}
+					if (!uint32_t(result))
+						break;
 					}
 					if (!uint32_t(result))
 						break;
@@ -1211,10 +1369,12 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			uint64_t result = 1;
 			const auto scratch = process.map_memory(4096, PROT_READ | PROT_WRITE);
 			try {
-				for (const auto &family : families) {
-					const auto name = to_ansi(family.name, 1252);
+				for (const auto &listed : families) {
+					const auto name = to_ansi(listed.name, 1252);
 					if (!wanted.empty() && lower(name) != lower(wanted))
 						continue;
+					for (const auto &family : wanted.empty() ? std::vector<InstalledFamily>{listed} : family_styles(listed)) {
+					const auto full_name = to_ansi(full_name_of(family), 1252);
 					for (const auto &script : enumerated_scripts(family, charset, call[4] == once_marker)) {
 						// ENUMLOGFONTEXA (LOGFONTA, full name, style, script) followed by NEWTEXTMETRICEXA.
 						std::vector<uint8_t> record(512, 0);
@@ -1222,7 +1382,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 						const auto style = to_ansi(style_of(family), 1252);
 						const auto script_name = to_ansi(script.script, 1252);
 						std::memcpy(record.data() + 28, name.data(), std::min<size_t>(name.size(), 31));
-						std::memcpy(record.data() + 60, name.data(), std::min<size_t>(name.size(), 63));
+						std::memcpy(record.data() + 60, full_name.data(), std::min<size_t>(full_name.size(), 63));
 						std::memcpy(record.data() + 124, style.data(), std::min<size_t>(style.size(), 31));
 						std::memcpy(record.data() + 156, script_name.data(), std::min<size_t>(script_name.size(), 31));
 						call.write(scratch, record);
@@ -1233,6 +1393,9 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 						result = outcome.value;
 						if (!uint32_t(outcome.value))
 							break;
+					}
+					if (!uint32_t(result))
+						break;
 					}
 					if (!uint32_t(result))
 						break;

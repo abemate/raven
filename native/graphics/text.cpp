@@ -8,6 +8,7 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkTypeface.h"
 #include "include/ports/SkFontMgr_empty.h"
+#include <filesystem>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -116,9 +117,17 @@ TextRenderer::TextRenderer(const std::string &directory) : state(std::make_uniqu
 		{"LiberationSans-Bold.ttf","LiberationSans-Italic.ttf","LiberationSans-BoldItalic.ttf"},
 		{"LiberationMono-Bold.ttf","LiberationMono-Italic.ttf","LiberationMono-BoldItalic.ttf"},
 		{"LiberationSerif-Bold.ttf","LiberationSerif-Italic.ttf","LiberationSerif-BoldItalic.ttf"}}};
+	// A font directory provisioned before it held the bold and italic faces leaves them to the system's copy of the same family;
+	// without either, those styles draw with the regular face.
 	for (size_t family=0;family<3;++family)
-		for (size_t style=0;style<3;++style)
-			state->styled[family][style+1]=manager->makeFromFile((directory+"/"+styles[family][style]).c_str());
+		for (size_t style=0;style<3;++style) {
+			for (const auto &folder : {directory,std::string("/usr/share/fonts/truetype/liberation"),std::string("/usr/share/fonts/liberation-sans"),
+					std::string("/usr/share/fonts/liberation"),std::string("/usr/share/fonts/TTF")}) {
+				const auto path=folder+"/"+styles[family][style];
+				if (!std::filesystem::exists(path)) continue;
+				if ((state->styled[family][style+1]=manager->makeFromFile(path.c_str()))) break;
+			}
+		}
 	state->styled[3][0]=manager->makeFromFile((directory+"/RavenSans-Regular.ttf").c_str());
 	state->styled[3][1]=manager->makeFromFile((directory+"/RavenSans-Bold.ttf").c_str());
 	for (const auto *path : {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf","/usr/local/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"})

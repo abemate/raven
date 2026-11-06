@@ -16,6 +16,16 @@ FONTS = {
     "LiberationSans-Regular.ttf": "075e71be4c58beda172ecb574a799308f04c3d054c6a5b7434954d3b0f1b28d8",
     "LiberationMono-Regular.ttf": "d18235f1e874771f4eaec3ddd6ddb4db849d334bdc6930c5c2185d9344834e62",
     "LiberationSerif-Regular.ttf": "350f4ffd773cae53560c63dca3d89a5070595614fde12f772bf43feb63d81064",
+    # The bold and italic faces Arial, Courier New and Times New Roman are drawn and handed out with (GetFontData).
+    "LiberationSans-Bold.ttf": "b72c65e551d653b54217ffad0d1454ce0657e4e8d4a28bcc79e0acd2598f4bf3",
+    "LiberationSans-Italic.ttf": "4ccb79043bd3a6d131b5a53901abb21261b1417f6052b38a9fa9716a4e5a3d81",
+    "LiberationSans-BoldItalic.ttf": "64263238517af60213cdb469165fc7e9acd0c09c35f4155f924a379f97125a57",
+    "LiberationMono-Bold.ttf": "50464e64aaadea741fb9516748aee296d570439406be11d63df22294e77ba867",
+    "LiberationMono-Italic.ttf": "35c3116d4366eb0e58494d8e432d4ee0c60c5735c7f775ffc096008bd2907c74",
+    "LiberationMono-BoldItalic.ttf": "291872531f0e8013df602c412fc570241860e41b1fa1b7972537c27a19024d4d",
+    "LiberationSerif-Bold.ttf": "bb033fae52dcbf67a55494a08829aaa788324624d72a195af7f93da3061c928f",
+    "LiberationSerif-Italic.ttf": "c1882fbb05e78537b9c39dad3c07c4f231c987a3747b20c8745737aed50cd488",
+    "LiberationSerif-BoldItalic.ttf": "10ec0fa22bc6f12a239d600c051752884d155997aafd19ebc24c4f4a8d2b98d0",
 }
 DEJAVU_RELEASE = "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2"
 DEJAVU_RELEASE_SHA256 = "fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7"

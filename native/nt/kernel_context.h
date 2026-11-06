@@ -136,6 +136,8 @@ struct InstalledFamily {
 };
 // The families of the fonts installed in the prefix, in name order; none without FreeType.
 std::vector<InstalledFamily> installed_font_families();
+// Every installed face of one family (its regular, bold, italic and other weights), one per weight and slant; none without FreeType.
+std::vector<InstalledFamily> installed_font_styles(std::u16string_view family);
 void register_canvas_service(ApiRegistry &registry, KernelContext &context);
 // Starts the program an application name or command line names, looked up the way Windows does; null with the Windows error otherwise.
 std::shared_ptr<class ProcessObject> start_program(KernelContext &context, const std::u16string &application, const std::u16string &line,

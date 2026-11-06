@@ -237,6 +237,23 @@ std::vector<InstalledFamily> installed_font_families()
 	return families;
 }
 
+std::vector<InstalledFamily> installed_font_styles(std::u16string_view family)
+{
+	std::lock_guard lock(font_mutex);
+	scan_fonts();
+	std::vector<InstalledFamily> styles;
+	for (const auto &face : scanned_faces) {
+		if (face.name.size() != family.size() || !std::equal(face.name.begin(), face.name.end(), family.begin(), [](char16_t a, char16_t b) {
+				const auto fold = [](char16_t c) { return c >= u'A' && c <= u'Z' ? char16_t(c + 32) : c; };
+				return fold(a) == fold(b);
+			}))
+			continue;
+		if (std::none_of(styles.begin(), styles.end(), [&](const InstalledFamily &style) { return style.weight == face.weight && style.italic == face.italic; }))
+			styles.push_back(face);
+	}
+	return styles;
+}
+
 namespace {
 
 HostFont *font_of(uint32_t handle)
@@ -530,6 +547,11 @@ void register_font_service(ApiRegistry &, KernelContext &)
 }
 
 std::vector<InstalledFamily> installed_font_families()
+{
+	return {};
+}
+
+std::vector<InstalledFamily> installed_font_styles(std::u16string_view)
 {
 	return {};
 }
