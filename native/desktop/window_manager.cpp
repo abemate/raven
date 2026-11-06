@@ -286,6 +286,9 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 	if (shifted && !resized && !window->parent) {
 		shift_window(handle, target.left - old.left, target.top - old.top);
 	} else if (shifted || resized) {
+		const bool was_positioning = positioning;
+		positioning = true;
+		struct Restore { bool &flag; bool value; ~Restore() { flag = value; } } restore{positioning, was_positioning};
 		const auto old_client_x = window->x, old_client_y = window->y;
 		if (window->parent && was_visible) {
 			const auto *parent = std::as_const(objects).window(window->parent);
@@ -312,12 +315,9 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		if (!window)
 			return;
 		const bool client_moved = window->x != old_client_x || window->y != old_client_y;
-		if (window->parent && client_moved && !resized) {
+		if (window->parent && client_moved && !resized)
 			// Moving a child in its parent changes where its whole subtree draws.
 			objects.update_window_dcs(handle);
-			const auto *parent = std::as_const(objects).window(window->parent);
-			send(handle, 3, 0, uint16_t(window->x - parent->x) | (uint64_t(uint16_t(window->y - parent->y)) << 16));
-		}
 		window = objects.window(handle);
 		if (window && window->parent && objects.window_visible(handle) && !(effective & swp_noredraw)) {
 			objects.update_window_dcs(window->parent);

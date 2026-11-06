@@ -1716,6 +1716,26 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		if ((window->style & 0x40000000U) && window->parent) send(window->parent,0x7b,args[2],args[3]);
 		return 0;
 	}
+	// WM_WINDOWPOSCHANGED: the default answer reports the change as WM_MOVE (the client origin, in the parent's client coordinates)
+	// and WM_SIZE (the client size, and whether the window is maximized or minimized), unless the flags say it kept them.
+	if (message==0x47 && args[3]) {
+		const bool narrow=process.mode()==NativeMode::x86;
+		const auto bytes=process.read_memory(args[3],narrow ? 28 : 40);
+		uint32_t flags; std::memcpy(&flags,bytes.data()+(narrow ? 24 : 32),4);
+		const auto handle=args[0];
+		if (!(flags & 2)) {
+			const auto *parent=window->parent ? std::as_const(objects).window(window->parent) : nullptr;
+			const int64_t x=parent ? int64_t(window->x)-parent->x : window->x, y=parent ? int64_t(window->y)-parent->y : window->y;
+			send(handle,3,0,uint16_t(x) | (uint64_t(uint16_t(y))<<16));
+			window=std::as_const(objects).window(handle);
+			if (!window) return 0;
+		}
+		if (!(flags & 1)) {
+			const uint64_t kind=(window->style & 0x01000000U) ? 2 : (window->style & 0x20000000U) ? 1 : 0;
+			send(handle,5,kind,uint16_t(window->width) | (uint64_t(uint16_t(window->height))<<16));
+		}
+		return 0;
+	}
 	if (message==0x205) {
 		const auto x=uint16_t(int64_t(window->x)+int16_t(uint16_t(args[3])));
 		const auto y=uint16_t(int64_t(window->y)+int16_t(uint16_t(args[3]>>16)));
