@@ -83,7 +83,8 @@ void describe_family(std::vector<uint8_t> &record, size_t metrics, const Install
 	put(0, 16);
 	put(4, 7);
 	put(16, weight);
-	record[20] = family.italic;
+	// Windows reports an italic face with lfItalic and tmItalic 255; programs test for that value.
+	record[20] = family.italic ? 0xff : 0;
 	record[23] = charset;
 	record[24] = 3;
 	record[25] = 2;
@@ -110,7 +111,7 @@ void describe_family(std::vector<uint8_t> &record, size_t metrics, const Install
 		std::memcpy(record.data() + at, characters, sizeof characters);
 		at += 8;
 	}
-	record[at] = family.italic;
+	record[at] = family.italic ? 0xff : 0;
 	// TMPF_TRUETYPE | TMPF_VECTOR, and the bit Windows sets for a variable pitch, under the family kind.
 	record[at + 3] = uint8_t((family.fixed ? 0x06 : 0x07) | (family.fixed ? 0x30 : 0x20));
 	record[at + 4] = charset;
