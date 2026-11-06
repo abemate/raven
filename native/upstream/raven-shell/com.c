@@ -328,3 +328,31 @@ HRESULT WINAPI OleRun(IUnknown *unknown)
 	IRunnableObject_Release(runnable);
 	return hr;
 }
+
+/* Locks an embedded object in the running state, or unlocks it; one without IRunnableObject is not lockable and needs nothing. */
+HRESULT WINAPI OleLockRunning(IUnknown *unknown, BOOL lock, BOOL last_unlock_closes)
+{
+	IRunnableObject *runnable;
+	HRESULT hr;
+	if (!unknown)
+		return E_INVALIDARG;
+	if (FAILED(IUnknown_QueryInterface(unknown, &IID_IRunnableObject, (void **)&runnable)))
+		return S_OK;
+	hr = IRunnableObject_LockRunning(runnable, lock, last_unlock_closes);
+	IRunnableObject_Release(runnable);
+	return hr;
+}
+
+/* Tells an embedded object whether it lives inside a container; one without IRunnableObject has nothing to change. */
+HRESULT WINAPI OleSetContainedObject(IUnknown *unknown, BOOL contained)
+{
+	IRunnableObject *runnable;
+	HRESULT hr;
+	if (!unknown)
+		return E_INVALIDARG;
+	if (FAILED(IUnknown_QueryInterface(unknown, &IID_IRunnableObject, (void **)&runnable)))
+		return S_OK;
+	hr = IRunnableObject_SetContainedObject(runnable, contained);
+	IRunnableObject_Release(runnable);
+	return hr;
+}

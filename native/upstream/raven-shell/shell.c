@@ -1656,3 +1656,32 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
 	return TRUE;
 }
+
+/* StrRetToBufW: the text a shell folder answered in a STRRET, copied into the buffer and cut to fit. A string from the task allocator
+ * is freed, as the caller hands it over; an offset names ANSI text inside the item identifier, and a short string is ANSI too. */
+HRESULT WINAPI StrRetToBufW(STRRET *source, LPCITEMIDLIST item, LPWSTR buffer, UINT size)
+{
+	if (!source || !buffer || !size)
+		return E_INVALIDARG;
+	buffer[0] = 0;
+	switch (source->uType) {
+	case STRRET_WSTR:
+		if (source->pOleStr)
+			lstrcpynW(buffer, source->pOleStr, (int)size);
+		CoTaskMemFree(source->pOleStr);
+		source->pOleStr = NULL;
+		break;
+	case STRRET_CSTR:
+		if (!MultiByteToWideChar(CP_ACP, 0, source->cStr, -1, buffer, (int)size))
+			buffer[size - 1] = 0;
+		break;
+	case STRRET_OFFSET:
+		if (item && !MultiByteToWideChar(CP_ACP, 0, (LPCSTR)item + source->uOffset, -1, buffer, (int)size))
+			buffer[size - 1] = 0;
+		break;
+	default:
+		return E_FAIL;
+	}
+	buffer[size - 1] = 0;
+	return S_OK;
+}
