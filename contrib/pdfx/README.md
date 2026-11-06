@@ -4,19 +4,16 @@ Scripts for running the portable PDF-XChange Editor 11 (x64) through a Raven bui
 
 ## Setup
 
-1. Build Raven as in the top-level README, from this branch, with the provisioned components (controls, installer, text,
-   graphics, roots, rtl), and build every target (`cmake --build build -j2`), not only `raven`: the component DLLs are staged
-   by the other targets.
-2. Unpack the portable edition into `~/.local/share/raven/pdfx-program` (the zip uses `\` separators; afterwards run
-   `chmod -R u+rwX` on the folder).
-3. Install the scripts and the menu entry:
+On the machine that runs it, from a checkout of this branch:
 
-   ```sh
-   install -m755 pdfx pdfx-print ~/.local/bin/
-   install -m644 pdfx.desktop ~/.local/share/applications/
-   ```
+```sh
+git switch --detach pdfx-work
+contrib/pdfx/setup-host.sh            # or: contrib/pdfx/setup-host.sh path/to/PXCEditor11_Portable_x64.zip
+```
 
-`RAVEN`, `PDFX_DIR` and `RAVEN_PREFIX` override where the scripts look (see the top of `pdfx`).
+It builds what is missing of the components (using `components-pdfx/` when it is there), builds Raven in `build-pdfx`
+(about 10 GB), unpacks a fresh portable PDF-XChange into `~/.local/share/raven/pdfx-program`, and installs `pdfx`,
+`pdfx-print` and the "PDF-XChange Editor (Raven)" menu entry. `JOBS` and `BUILD_DIR` change how and where it builds.
 
 ## Use
 
