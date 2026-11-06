@@ -157,6 +157,7 @@ def main():
     parser.add_argument("evidence", type=Path)
     parser.add_argument("--stage", choices=STAGES, default="window")
     parser.add_argument("--x11", action="store_true")
+    parser.add_argument("--pdf", type=Path, help="open this file (as raven-test.pdf) instead of the generated test document")
     parser.add_argument("--wait", type=int, default=300, help="seconds to wait for the main window")
     parser.add_argument("--keep-open", type=int, default=0, help="seconds to keep the program running at the end")
     args = parser.parse_args()
@@ -176,7 +177,10 @@ def workflow(args):
     documents = prefix / "drive_c" / "users" / "Public" / "Documents"
     documents.mkdir(parents=True)
     pdf = documents / "raven-test.pdf"
-    subprocess.run([sys.executable, str(REPO / "testdata/pdfx/make-test-pdf.py"), str(pdf), "5"], check=True)
+    if args.pdf:
+        shutil.copyfile(args.pdf, pdf)
+    else:
+        subprocess.run([sys.executable, str(REPO / "testdata/pdfx/make-test-pdf.py"), str(pdf), "5"], check=True)
     stage = STAGES.index(args.stage)
 
     compositor = None if x11 else start_compositor((evidence / "compositor.log").open("wb"))
@@ -186,7 +190,7 @@ def workflow(args):
     command = [str(args.raven.resolve()), "--run-process", "--execution=native", "--timeout-ms=1800000",
                "--desktop=x11" if x11 else "--desktop=wayland", str(program_directory / "PXCEditor.exe")]
     if stage >= STAGES.index("open"):
-        command.append(r"C:\users\Public\Documents\raven-test.pdf")
+        command += ["--", r"C:\users\Public\Documents\raven-test.pdf"]
     started = time.time()
     run = Run(args.raven, evidence, subprocess.Popen(command, env=env, stdout=log, stderr=log), log)
     try:
@@ -213,6 +217,8 @@ def workflow(args):
         while time.time() < end and run.alive():
             run.note_titles()
             time.sleep(2)
+        if args.keep_open and run.alive():
+            run.shot("kept-open")
         return 0
     except Exception as error:
         print(f"FAILED: {error}", flush=True)

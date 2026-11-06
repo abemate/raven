@@ -10,6 +10,9 @@ import sys
 def page_stream(number, pages):
     # Big page number and a heading; a grid of boxes makes scroll and zoom visible on a screenshot.
     lines = [
+        # A filled bar across the top, coloured per page: vector drawing, visible without any font.
+        "%.2f 0.3 %.2f rg 36 740 540 30 re f" % (0.2 * number % 1.0, 1.0 - 0.15 * number),
+        "0 0 0 rg",
         "BT /F1 48 Tf 72 700 Td (Raven test page %d of %d) Tj ET" % (number, pages),
         "BT /F1 18 Tf 72 650 Td (The quick brown fox jumps over the lazy dog.) Tj ET",
         "BT /F1 220 Tf 200 300 Td (%d) Tj ET" % number,
