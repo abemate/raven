@@ -1781,6 +1781,55 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		});
 	for (const auto *name : {"StartDocW", "StartDocA", "EndDoc", "StartPage", "EndPage", "AbortDoc"})
 		registry.add(name, 2, [](ApiCall &call) { call.fail(120, 0); });
+	// The spooler answers as on a Windows with no printer installed. EnumPrinters(flags, name, level, buffer, size, needed, returned)
+	// lists none: nothing is needed and nothing returned, for any of the printer info levels.
+	for (const auto *name : {"EnumPrintersW", "EnumPrintersA"})
+		registry.add(name, 7, [](ApiCall &call) {
+			const uint32_t level = call.u32(2);
+			if (level != 1 && level != 2 && level != 4 && level != 5) {
+				call.fail(124, 0);
+				return;
+			}
+			if (!call[5] || !call[6]) {
+				call.fail(1780, 0);
+				return;
+			}
+			call.store<uint32_t>(call[5], 0);
+			call.store<uint32_t>(call[6], 0);
+			call.ret(1);
+		});
+	// No printer can be opened, so no printer handle exists: OpenPrinter fails with ERROR_INVALID_PRINTER_NAME and a null handle, and
+	// what takes a printer handle finds an invalid one. What names a printer, DocumentProperties and DeviceCapabilities, answers -1.
+	for (const auto *name : {"OpenPrinterW", "OpenPrinterA"})
+		registry.add(name, 3, [](ApiCall &call) {
+			if (call[1])
+				call.store_pointer(call[1], 0);
+			call.fail(1801, 0);
+		});
+	registry.add("ClosePrinter", 1, [](ApiCall &call) { call.fail(6, 0); });
+	for (const auto *name : {"GetPrinterW", "GetPrinterA"})
+		registry.add(name, 5, [](ApiCall &call) {
+			if (call[4])
+				call.store<uint32_t>(call[4], 0);
+			call.fail(6, 0);
+		});
+	for (const auto *name : {"GetPrinterDriverW", "GetPrinterDriverA"})
+		registry.add(name, 6, [](ApiCall &call) {
+			if (call[5])
+				call.store<uint32_t>(call[5], 0);
+			call.fail(6, 0);
+		});
+	// GetPrinterData answers its error as the return value.
+	for (const auto *name : {"GetPrinterDataW", "GetPrinterDataA"})
+		registry.add(name, 6, [](ApiCall &call) {
+			if (call[5])
+				call.store<uint32_t>(call[5], 0);
+			call.ret(6);
+		});
+	for (const auto *name : {"DocumentPropertiesW", "DocumentPropertiesA"})
+		registry.add(name, 6, [](ApiCall &call) { call.fail(1801, uint64_t(int64_t(-1))); });
+	for (const auto *name : {"DeviceCapabilitiesW", "DeviceCapabilitiesA"})
+		registry.add(name, 5, [](ApiCall &call) { call.fail(1801, uint64_t(uint32_t(-1))); });
 	registry.add("GdiGetCodePage", 1, [](ApiCall &call) { call.ret(1252); });
 }
 
