@@ -1324,6 +1324,15 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(call[3], 96);
 		call.ret(0);
 	});
+	// The scale factor that goes with those 96 dots per inch: SCALE_100_PERCENT, on every monitor.
+	registry.add("GetScaleFactorForMonitor", 2, [](ApiCall &call) {
+		if (!call[1]) {
+			call.ret(0x80070057U);
+			return;
+		}
+		call.store<uint32_t>(call[1], 100);
+		call.ret(0);
+	});
 	registry.add("VerSetConditionMask", 3, [](ApiCall &call) {
 		uint64_t mask = call[0];
 		const uint32_t types = call.u32(1);
