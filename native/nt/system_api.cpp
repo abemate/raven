@@ -1801,6 +1801,53 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.put_wide(call[1], result, capacity);
 		call.ret(result.size() + 1);
 	});
+	// PathUnExpandEnvStrings(path, buffer, size): the longest leading folder that one of the variables Windows uses for this names
+	// (all users' profile, roaming application data, the user's profile, the computer name, program files, the system root and drive)
+	// becomes that variable in %...%. FALSE when none does or the buffer is too small.
+	for (const bool wide : {true, false})
+		registry.add(wide ? "PathUnExpandEnvStringsW" : "PathUnExpandEnvStringsA", 3, [variables, key_of, wide, &context](ApiCall &call) {
+			if (!call[0] || !call[1]) {
+				call.ret(0);
+				return;
+			}
+			const std::u16string path = wide ? call.wide(call[0]) : from_ansi(call.narrow(call[0]), context.launch.ansi_code_page);
+			std::u16string best_name;
+			size_t best = 0;
+			for (const auto *name : {u"ALLUSERSPROFILE", u"APPDATA", u"USERPROFILE", u"COMPUTERNAME", u"ProgramFiles", u"SystemRoot", u"SystemDrive"}) {
+				const auto found = variables->values.find(key_of(name));
+				if (found == variables->values.end())
+					continue;
+				const auto &value = found->second.second;
+				if (value.empty() || value.size() <= best || path.size() < value.size() || key_of(path.substr(0, value.size())) != key_of(value))
+					continue;
+				// Only a whole folder counts: C:\Program Files does not stand in C:\Program FilesX.
+				if (path.size() > value.size() && path[value.size()] != u'\\' && value.back() != u'\\')
+					continue;
+				best = value.size();
+				best_name = name;
+			}
+			if (!best) {
+				call.ret(0);
+				return;
+			}
+			const auto result = u"%" + best_name + u"%" + path.substr(best);
+			const size_t capacity = call.u32(2);
+			if (wide) {
+				if (capacity <= result.size()) {
+					call.ret(0);
+					return;
+				}
+				call.put_wide(call[1], result, capacity);
+			} else {
+				const auto narrow = to_ansi(result, context.launch.ansi_code_page);
+				if (capacity <= narrow.size()) {
+					call.ret(0);
+					return;
+				}
+				call.put_narrow(call[1], narrow, capacity);
+			}
+			call.ret(1);
+		});
 	// The environment of any token is this user's: the expansion is ExpandEnvironmentStrings', answered as TRUE or FALSE.
 	registry.add("ExpandEnvironmentStringsForUserW", 4, [&registry](ApiCall &call) {
 		ApiCall inner(call.process, call.environment, {call[1], call[2], call[3]});

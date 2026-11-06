@@ -1158,6 +1158,157 @@ void register_shlwapi_api(ApiRegistry &registry, KernelContext &context)
 				return call.ret(call[0] + at);
 		call.ret(0);
 	});
+	const auto fold_ascii = [](char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : c; };
+	// StrCmpLogicalW: Explorer's order, ignoring case, with runs of digits compared as the numbers they are, so "file2" comes before
+	// "file10". A digit sorts before any other character.
+	registry.add("StrCmpLogicalW", 2, [](ApiCall &call) {
+		if (!call[0] || !call[1]) {
+			call.ret(call[0] ? 1 : call[1] ? uint32_t(-1) : 0);
+			return;
+		}
+		const auto left = call.wide(call[0], whole_text), right = call.wide(call[1], whole_text);
+		const auto digit = [](char16_t c) { return c >= u'0' && c <= u'9'; };
+		size_t a = 0, b = 0;
+		while (a < left.size()) {
+			if (b >= right.size()) {
+				call.ret(1);
+				return;
+			}
+			if (digit(left[a])) {
+				if (!digit(right[b])) {
+					call.ret(uint32_t(-1));
+					return;
+				}
+				size_t a_end = a, b_end = b;
+				while (a_end < left.size() && digit(left[a_end])) ++a_end;
+				while (b_end < right.size() && digit(right[b_end])) ++b_end;
+				size_t a_start = a, b_start = b;
+				while (a_start + 1 < a_end && left[a_start] == u'0') ++a_start;
+				while (b_start + 1 < b_end && right[b_start] == u'0') ++b_start;
+				const auto x = std::u16string_view(left).substr(a_start, a_end - a_start), y = std::u16string_view(right).substr(b_start, b_end - b_start);
+				if (x.size() != y.size() || x != y) {
+					call.ret(x.size() < y.size() || (x.size() == y.size() && x < y) ? uint32_t(-1) : 1);
+					return;
+				}
+				a = a_end;
+				b = b_end;
+				continue;
+			}
+			if (digit(right[b])) {
+				call.ret(1);
+				return;
+			}
+			const int order = compare_fold(std::u16string_view(left).substr(a, 1), std::u16string_view(right).substr(b, 1));
+			if (order) {
+				call.ret(order < 0 ? uint32_t(-1) : 1);
+				return;
+			}
+			++a;
+			++b;
+		}
+		call.ret(b < right.size() ? uint32_t(-1) : 0);
+	});
+	registry.add("StrStrIA", 2, [fold_ascii](ApiCall &call) {
+		if (!call[0] || !call[1]) {
+			call.ret(0);
+			return;
+		}
+		const auto text = call.narrow(call[0], whole_text), needle = call.narrow(call[1]);
+		for (size_t at = 0; at + needle.size() <= text.size(); ++at)
+			if (std::equal(needle.begin(), needle.end(), text.begin() + at, [&](char x, char y) { return fold_ascii(x) == fold_ascii(y); })) {
+				call.ret(call[0] + at);
+				return;
+			}
+		call.ret(0);
+	});
+	// StrStrNIW(text, search, count): the first match, ignoring case, that starts within the first count characters.
+	registry.add("StrStrNIW", 3, [](ApiCall &call) {
+		if (!call[0] || !call[1] || !call.u32(2)) {
+			call.ret(0);
+			return;
+		}
+		const auto text = call.wide(call[0], whole_text), needle = call.wide(call[1]);
+		const size_t limit = std::min<size_t>(call.u32(2), text.size());
+		for (size_t at = 0; at < limit && at + needle.size() <= text.size(); ++at)
+			if (equal_fold(std::u16string_view(text).substr(at, needle.size()), needle)) {
+				call.ret(call[0] + at * 2);
+				return;
+			}
+		call.ret(0);
+	});
+	registry.add("StrCmpNIA", 3, [fold_ascii](ApiCall &call) {
+		const size_t count = call.u32(2);
+		const auto left = call.narrow(call[0]).substr(0, count), right = call.narrow(call[1]).substr(0, count);
+		for (size_t at = 0; at < std::min(left.size(), right.size()); ++at) {
+			const auto x = uint8_t(fold_ascii(left[at])), y = uint8_t(fold_ascii(right[at]));
+			if (x != y) {
+				call.ret(x < y ? uint32_t(-1) : 1);
+				return;
+			}
+		}
+		call.ret(left.size() == right.size() ? 0 : left.size() < right.size() ? uint32_t(-1) : 1);
+	});
+	// StrRChrA(start, end, character): the last occurrence before end, or before the terminator when end is null.
+	registry.add("StrRChrA", 3, [](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(0);
+			return;
+		}
+		const auto text = call.narrow(call[0], whole_text);
+		const auto end = call[1] && call[1] >= call[0] ? std::min<size_t>(call[1] - call[0], text.size()) : text.size();
+		const auto found = text.substr(0, end).rfind(char(call.u32(2) & 0xff));
+		call.ret(found == text.npos ? 0 : call[0] + found);
+	});
+	registry.add("StrChrIW", 2, [](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(0);
+			return;
+		}
+		const auto text = call.wide(call[0], whole_text);
+		const std::u16string wanted(1, char16_t(call.u32(1)));
+		for (size_t at = 0; at < text.size(); ++at)
+			if (equal_fold(std::u16string_view(text).substr(at, 1), wanted)) {
+				call.ret(call[0] + at * 2);
+				return;
+			}
+		call.ret(0);
+	});
+	// StrCSpnIW(text, set): how many characters lead the text before one of the set's, ignoring case.
+	registry.add("StrCSpnIW", 2, [](ApiCall &call) {
+		if (!call[0] || !call[1]) {
+			call.ret(0);
+			return;
+		}
+		const auto text = call.wide(call[0], whole_text), set = call.wide(call[1]);
+		size_t at = 0;
+		for (; at < text.size(); ++at) {
+			bool member = false;
+			for (size_t i = 0; i < set.size() && !member; ++i)
+				member = equal_fold(std::u16string_view(text).substr(at, 1), std::u16string_view(set).substr(i, 1));
+			if (member)
+				break;
+		}
+		call.ret(uint32_t(at));
+	});
+	// PathGetCharType: what a character may be in a path. Wildcards and separators are only that; any other printable character but
+	// < > " | / is valid in a long name, and in a short one unless it is a space or one of + , ; = [ ].
+	registry.add("PathGetCharTypeW", 1, [](ApiCall &call) {
+		const char16_t c = char16_t(call.u32(0));
+		if (c < u' ' || c == u'<' || c == u'>' || c == u'"' || c == u'|' || c == u'/') {
+			call.ret(0);
+			return;
+		}
+		if (c == u'*' || c == u'?') {
+			call.ret(4);
+			return;
+		}
+		if (c == u'\\' || c == u':') {
+			call.ret(8);
+			return;
+		}
+		const bool short_name = !(c == u' ' || c == u'+' || c == u',' || c == u';' || c == u'=' || c == u'[' || c == u']');
+		call.ret(1 | (short_name ? 2 : 0));
+	});
 	registry.add("StrChrW", 2, [](ApiCall &call) {
 		const auto text = call.wide(call[0], whole_text);
 		const auto found = text.find(char16_t(call[1]));

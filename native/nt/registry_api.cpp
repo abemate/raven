@@ -869,6 +869,13 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 	registry.add("RegDeleteTreeA", 2, [&hive, text_of, view](ApiCall &call) {
 		call.ret(hive.remove_tree(call[0], call[1] ? view(call[0], text_of(call, call[1], false)) : std::u16string()));
 	});
+	// SHDeleteKey removes a key with everything below it, as RegDeleteTree does for a named key.
+	registry.add("SHDeleteKeyW", 2, [&hive, text_of, view](ApiCall &call) {
+		call.ret(hive.remove_tree(call[0], call[1] ? view(call[0], text_of(call, call[1], true)) : std::u16string()));
+	});
+	registry.add("SHDeleteKeyA", 2, [&hive, text_of, view](ApiCall &call) {
+		call.ret(hive.remove_tree(call[0], call[1] ? view(call[0], text_of(call, call[1], false)) : std::u16string()));
+	});
 	registry.add("RegDeleteKeyExW", 4, [&hive, text_of, view](ApiCall &call) { call.ret(hive.remove_key(call[0], view(call[0], text_of(call, call[1], true), call.u32(2)))); });
 	registry.add("RegCloseKey", 1, [&hive](ApiCall &call) { call.ret(hive.close(call[0])); });
 	registry.add("RegOverridePredefKey", 2, [&hive](ApiCall &call) { call.ret(hive.override_root(call[0], call[1])); });
