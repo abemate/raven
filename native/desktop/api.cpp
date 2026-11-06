@@ -5,6 +5,7 @@
 #include "graphics/png_codec.h"
 #endif
 
+#include <cstdio>
 #include <algorithm>
 #include <array>
 #include <new>
@@ -13,7 +14,25 @@
 namespace raven {
 
 NativeDesktop::NativeDesktop(NativeProcess &process, NativeEnvironment &environment, DesktopObjects &objects, NativeResources &resources)
-	: process(process), environment(environment), objects(objects), resources(resources) {}
+	: process(process), environment(environment), objects(objects), resources(resources)
+{
+	// A fault near a bitmap's pixels names the bitmap: its size, depth and row length, and whether the program made it as a DIB section,
+	// with the screen size the program was told.
+	process.mapping_owner = [&objects](uint64_t start) -> std::string {
+		for (const auto handle : objects.bitmap_handles()) {
+			const auto *bitmap = std::as_const(objects).bitmap(handle);
+			if (!bitmap || bitmap->address != start)
+				continue;
+			const auto &screen = objects.nonclient_metrics();
+			char text[256];
+			std::snprintf(text, sizeof text, "bitmap %llx %ux%u, %u bits, %u bytes a row, %s%s; screen %dx%d", static_cast<unsigned long long>(handle),
+				bitmap->width, bitmap->height, bitmap->depth, bitmap->stride, bitmap->dib_section ? "DIB section" : "window or device surface",
+				bitmap->top_down ? ", top-down" : ", bottom-up", screen.screen_x, screen.screen_y);
+			return text;
+		}
+		return {};
+	};
+}
 
 std::span<const std::string_view> NativeDesktop::control_exports()
 {

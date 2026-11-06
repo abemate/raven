@@ -93,6 +93,8 @@ public:
 	// Where an address lies among the memory this process mapped for the guest: inside or just past a mapping, or in one released
 	// lately, for the report of a fault.
 	std::string describe_address(uint64_t address) const;
+	// What a mapping that starts at the given address holds, from the layer that made it (a bitmap's pixels, say); empty when unknown.
+	std::function<std::string(uint64_t start)> mapping_owner;
 	void discard_memory(uint64_t address, size_t size);
 	// Dynamic image mappings share LoadedImage storage; the loader owns initialization and lifetime.
 	void map_image(LoadedImage &image);

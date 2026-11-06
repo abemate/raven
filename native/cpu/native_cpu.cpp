@@ -1238,13 +1238,21 @@ std::string NativeProcess::describe_address(uint64_t address) const
 	for (const auto &allocation : state->allocations) {
 		if (address >= allocation.first && address < allocation.first + allocation.second) {
 			text << "inside mapping " << allocation.first << "+" << allocation.second << " at offset " << address - allocation.first;
+			if (mapping_owner)
+				if (const auto owner = mapping_owner(allocation.first); !owner.empty())
+					text << " (" << owner << ")";
 			return text.str();
 		}
 		if (allocation.first <= address && (!below || allocation.first > below->first))
 			below = &allocation;
 	}
 	if (below)
+	{
 		text << "past mapping " << below->first << "+" << below->second << " by " << address - (below->first + below->second);
+		if (mapping_owner)
+			if (const auto owner = mapping_owner(below->first); !owner.empty())
+				text << " (" << owner << ")";
+	}
 	const auto now = std::chrono::steady_clock::now();
 	for (auto entry = state->released.rbegin(); entry != state->released.rend(); ++entry)
 		if (address >= entry->address && address < entry->address + entry->size) {
