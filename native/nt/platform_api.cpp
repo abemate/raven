@@ -2540,6 +2540,30 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint8_t>(call[0], 0);
 		call.ret(0);
 	});
+	// CryptSetProvParam(provider, parameter, data, flags). PP_CLIENT_HWND names the window a provider's prompts belong to, process wide,
+	// so it needs no provider; the software provider here prompts for nothing, so the window is accepted and kept by no one. A keyset's
+	// security descriptor, a prompt string and the PINs of a smart card provider are accepted the same way for an open provider. Any
+	// other parameter is one the provider does not have: NTE_BAD_TYPE.
+	registry.add("CryptSetProvParam", 4, [crypt](ApiCall &call) {
+		const uint32_t parameter = call.u32(1);
+		if (parameter == 1) {
+			if (!call[2]) {
+				call.fail(87);
+				return;
+			}
+			call.ret(1);
+			return;
+		}
+		if (!crypt->providers.contains(call[0])) {
+			call.fail(0x80090001U);
+			return;
+		}
+		if (parameter == 8 || parameter == 21 || parameter == 32 || parameter == 33 || parameter == 44) {
+			call.ret(1);
+			return;
+		}
+		call.fail(0x8009000aU);
+	});
 	// CryptGetProvParam(provider, parameter, data, length, flags): the algorithms the provider offers, one per call from CRYPT_FIRST on
 	// (PP_ENUMALGS as PROV_ENUMALGS, PP_ENUMALGS_EX as PROV_ENUMALGS_EX) until ERROR_NO_MORE_ITEMS, and its name, version, kind and key
 	// pairs. Without a buffer the length needed.
