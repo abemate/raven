@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PDF-XChange Editor (Raven)
+Comment=Edit and annotate PDF documents
+Exec=pdfx %F
+Icon=application-pdf
+Terminal=false
+MimeType=application/pdf;
+Categories=Office;Viewer;

@@ -1,0 +1,23 @@
+#!/bin/bash
+# Start PDF-XChange Editor under Raven, optionally with PDFs to open.
+#   pdfx [file.pdf ...]
+# RAVEN         the raven binary              (default: ~/raven/build/native/raven)
+# PDFX_DIR      the portable PDF-XChange      (default: ~/.local/share/raven/pdfx-program)
+# RAVEN_PREFIX  its Windows installation      (default: ~/.local/share/raven/pdfx)
+set -euo pipefail
+RAVEN=${RAVEN:-$HOME/raven/build/native/raven}
+PDFX_DIR=${PDFX_DIR:-$HOME/.local/share/raven/pdfx-program}
+export RAVEN_PREFIX=${RAVEN_PREFIX:-$HOME/.local/share/raven/pdfx}
+desktop=--desktop=wayland
+[[ -n ${WAYLAND_DISPLAY:-} ]] || desktop=--desktop=x11
+files=()
+for file in "$@"; do
+    # Raven shows the Linux root as drive Z:, so /home/me/a.pdf is Z:\home\me\a.pdf.
+    full=$(realpath -- "$file")
+    files+=("Z:${full//\//\\}")
+done
+# Raven ends a run after its timeout; a day is the longest it allows.
+command=("$RAVEN" --run-process --execution=native --timeout-ms=86400000 "$desktop" "$PDFX_DIR/PXCEditor.exe")
+(( ${#files[@]} )) && command+=(-- "${files[@]}")
+[[ -n ${PDFX_DRY_RUN:-} ]] && { printf '%q ' "${command[@]}"; echo; exit 0; }
+exec "${command[@]}"

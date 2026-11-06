@@ -1,0 +1,22 @@
+#!/bin/sh
+# Print a PDF through the Linux desktop while Raven has no printing of its own.
+#   pdfx-print file.pdf | 'C:\users\you\Documents\file.pdf' | 'Z:\home\you\file.pdf'
+# Opens Okular's print dialog when Okular is installed, otherwise sends the file to the default CUPS printer with lp.
+set -eu
+RAVEN_PREFIX=${RAVEN_PREFIX:-$HOME/.local/share/raven/pdfx}
+[ $# -eq 1 ] || { echo "usage: pdfx-print FILE.pdf" >&2; exit 2; }
+file=$1
+case "$file" in
+    [Zz]:\\*) file=$(printf '%s' "${file#??}" | tr '\\' '/') ;;
+    [A-Ya-y]:\\*)
+        drive=$(printf '%s' "$file" | cut -c1 | tr 'A-Z' 'a-z')
+        rest=$(printf '%s' "${file#??}" | tr '\\' '/')
+        # Windows paths ignore case; find the file in the prefix the way Raven does.
+        file=$(find "$RAVEN_PREFIX/drive_$drive" -ipath "$RAVEN_PREFIX/drive_$drive$rest" -print -quit 2>/dev/null || true)
+        [ -n "$file" ] || { printf 'pdfx-print: not found in %s: %s\n' "$RAVEN_PREFIX" "$1" >&2; exit 1; } ;;
+esac
+[ -f "$file" ] || { printf 'pdfx-print: no such file: %s\n' "$file" >&2; exit 1; }
+if command -v okular >/dev/null 2>&1; then
+    exec okular --print "$file"
+fi
+exec lp -- "$file"
