@@ -455,12 +455,31 @@ bool DesktopObjects::set_title(uint64_t handle,std::u16string title)
 bool DesktopObjects::invalidate(uint64_t handle,DesktopRect rect,bool erase)
 {
 	auto *record=window(handle); if (!record) return false;
+	// The update region never reaches past the client area, as on Windows: a program sizes what it draws into from the client
+	// rectangle and paints all of rcPaint, so a larger paint rectangle sends it past the end of its buffer.
+	rect={std::max(rect.left,0),std::max(rect.top,0),std::min(rect.right,record->width),std::min(rect.bottom,record->height)};
+	if (rect.left>=rect.right || rect.top>=rect.bottom) return true;
 	DesktopRegion update(record->update); update.add(rect);
 	const auto previous=record->update.bytes(),current=update.bytes();
 	if (current>limit-used+previous) return false;
 	if (record->update.empty() && !update.empty()) ++record->update_generation;
 	record->update=std::move(update); used=used-previous+current;
 	if (!record->update.empty()) record->erase_pending|=erase;
+	return true;
+}
+
+bool DesktopObjects::clip_update(uint64_t handle)
+{
+	auto *record=window(handle); if (!record) return false;
+	if (record->update.empty()) return true;
+	const auto bounds=record->update.bounds();
+	if (bounds.left>=0 && bounds.top>=0 && bounds.right<=record->width && bounds.bottom<=record->height) return true;
+	DesktopRegion client; client.add({0,0,std::max(record->width,0),std::max(record->height,0)});
+	DesktopRegion update; update.combine(record->update,client,1);
+	const auto previous=record->update.bytes(),current=update.bytes();
+	if (current>limit-used+previous) return false;
+	record->update=std::move(update); used=used-previous+current;
+	if (record->update.empty()) record->erase_pending=false;
 	return true;
 }
 

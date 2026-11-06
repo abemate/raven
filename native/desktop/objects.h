@@ -408,6 +408,8 @@ public:
 	bool set_title(uint64_t window,std::u16string title);
 	bool invalidate(uint64_t window,DesktopRect rect,bool erase);
 	bool validate(uint64_t window,DesktopRect rect);
+	// Trims the update region to the client area after the window's client size changed.
+	bool clip_update(uint64_t window);
 	// Takes a region, in client coordinates, out of what the window has to repaint.
 	bool validate(uint64_t window,const DesktopRegion &region);
 	bool start_paint(uint64_t window);

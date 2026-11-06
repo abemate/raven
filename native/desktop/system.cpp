@@ -153,6 +153,9 @@ void NativeWindows::recalculate_client(uint64_t handle,int32_t previous_width,in
 		for (const auto child : objects.child_windows(handle))
 			shift_window(child, client.left - laid_out.first, client.top - laid_out.second);
 	resized = window->width != old_width || window->height != old_height;
+	// What was waiting to be painted outside the new client area is gone, as Windows clips the update region to it.
+	if (resized && !objects.clip_update(handle))
+		throw uint32_t(8);
 	objects.update_window_dcs(handle);
 	if (resized)
 		publish_window(handle, uint32_t(std::max(window->width, 0)), uint32_t(std::max(window->height, 0)));

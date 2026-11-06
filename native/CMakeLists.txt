@@ -668,9 +668,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 -Wl,--entry,raven_entry,--image-base,0x1d0000000,--no-insert-timestamp
                 -o ${PAINT_RESIZE_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/paint_resize_client.c -luser32 -lgdi32 -lkernel32
             DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/paint_resize_client.c VERBATIM)
-        add_custom_target(clip_pe_fixtures ALL DEPENDS ${CLIP_CLIENT} ${CLIP_PAINT_CLIENT} ${PAINT_RESIZE_CLIENT})
+        # The update region, and so rcPaint, stays inside the client area whatever adds to it.
+        set(UPDATE_CLIP_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/update-clip-client.exe)
+        add_custom_command(OUTPUT ${UPDATE_CLIP_CLIENT}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                -Wl,--entry,raven_entry,--image-base,0x1d0000000,--no-insert-timestamp
+                -o ${UPDATE_CLIP_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/update_clip_client.c -luser32 -lgdi32 -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/update_clip_client.c VERBATIM)
+        add_custom_target(clip_pe_fixtures ALL DEPENDS ${CLIP_CLIENT} ${CLIP_PAINT_CLIENT} ${PAINT_RESIZE_CLIENT} ${UPDATE_CLIP_CLIENT})
         add_test(NAME native_paint_resize COMMAND raven --run-process --execution=native --timeout-ms=30000 ${PAINT_RESIZE_CLIENT})
         set_tests_properties(native_paint_resize PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        add_test(NAME native_update_clip COMMAND raven --run-process --execution=native --timeout-ms=30000 ${UPDATE_CLIP_CLIENT})
+        set_tests_properties(native_update_clip PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         add_executable(clip_test desktop/clip_test.cpp)
         target_link_libraries(clip_test PRIVATE raven_cpu)
         add_dependencies(clip_test clip_pe_fixtures raven-bootstrap)
