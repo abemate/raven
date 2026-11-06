@@ -8,9 +8,19 @@ set -euo pipefail
 RAVEN=${RAVEN:-$HOME/raven/build/native/raven}
 PDFX_DIR=${PDFX_DIR:-$HOME/.local/share/raven/pdfx-program}
 export RAVEN_PREFIX=${RAVEN_PREFIX:-$HOME/.local/share/raven/pdfx}
+# PDFX_LOG_DIR  where each run's log goes     (default: ~/.local/state/pdfx; the newest 20 are kept)
 # setup-host.sh records the commit Raven was built from, so a log says which build ran.
 PDFX_BUILD=unknown
-echo "pdfx: Raven build $PDFX_BUILD" >&2
+# Every run keeps a log, also when started from the menu, with crashes named and their stack shown.
+export RAVEN_BACKTRACE=${RAVEN_BACKTRACE:-1}
+log_dir=${PDFX_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/pdfx}
+if [[ -z ${PDFX_DRY_RUN:-} ]] && mkdir -p "$log_dir" 2>/dev/null; then
+    log="$log_dir/pdfx-$(date +%Y%m%d-%H%M%S).log"
+    ln -sfn "$(basename "$log")" "$log_dir/latest.log"
+    { ls -1t "$log_dir"/pdfx-*.log 2>/dev/null | tail -n +20 | xargs -r rm -f; } || true
+    exec > >(tee -a "$log") 2>&1
+fi
+echo "pdfx: Raven build $PDFX_BUILD, started $(date '+%F %T')${*:+ with $*}"
 desktop=--desktop=wayland
 [[ -n ${WAYLAND_DISPLAY:-} ]] || desktop=--desktop=x11
 files=()

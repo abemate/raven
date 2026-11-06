@@ -69,7 +69,8 @@ fi
 step "Installing the pdfx command and the menu entry"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 commit=$(git -C "$repo" log -1 --format='%h %cs' 2>/dev/null || echo unknown)
-sed -e "s|^RAVEN=\${RAVEN:-.*}|RAVEN=\${RAVEN:-$build/native/raven}|" -e "s|^PDFX_BUILD=unknown|PDFX_BUILD='$commit'|" contrib/pdfx/pdfx > "$HOME/.local/bin/pdfx"
+sed -e "s|^RAVEN=\${RAVEN:-.*}|RAVEN=\${RAVEN:-$build/native/raven}|" -e "s|^PDFX_BUILD=unknown|PDFX_BUILD='$commit'|" \
+    -e "s|^log_dir=\${PDFX_LOG_DIR:-.*}|log_dir=\${PDFX_LOG_DIR:-$(dirname "$repo")/pdfx-logs}|" contrib/pdfx/pdfx > "$HOME/.local/bin/pdfx"
 install -m755 contrib/pdfx/pdfx-print "$HOME/.local/bin/pdfx-print"
 chmod 755 "$HOME/.local/bin/pdfx"
 sed "s|^Exec=pdfx|Exec=$HOME/.local/bin/pdfx|" contrib/pdfx/pdfx.desktop > "$HOME/.local/share/applications/pdfx-raven.desktop"
@@ -77,3 +78,4 @@ command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/
 
 step "Done"
 echo "Start it from the menu (PDF-XChange Editor (Raven)), or run: $HOME/.local/bin/pdfx [file.pdf]"
+echo "Each run logs to $(dirname "$repo")/pdfx-logs (latest.log is the newest)."

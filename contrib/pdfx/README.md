@@ -17,7 +17,8 @@ It builds what is missing of the components (using `components-pdfx/` when it is
 
 ## Use
 
-- `pdfx [file.pdf ...]` starts the editor, opening the files given. Linux paths reach it as `Z:\...`.
+- `pdfx [file.pdf ...]` starts the editor, opening the files given. Linux paths reach it as `Z:\...`. Every run, from the menu
+  too, writes a log with crash backtraces into `pdfx-logs/` beside this checkout (`latest.log` is the newest; 20 are kept).
 - Printing: Raven has no printing yet, so PDF-XChange's Print dialog shows "No printer installed". Save the document and run
   `pdfx-print FILE`, which takes a Linux path or the `C:\...` path PDF-XChange shows, and opens Okular's print dialog (or
   sends it to the default printer with `lp` when Okular is not installed).
