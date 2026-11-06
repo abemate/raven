@@ -61,4 +61,13 @@ inline std::vector<uint8_t> make_sid(uint8_t authority, std::initializer_list<ui
 // The account the program runs as: the same identity the registry path of the current user names.
 inline std::vector<uint8_t> user_sid() { return make_sid(5, {21, 1000, 1000, 1000, 1000}); }
 
+// The groups of the interactive desktop logon every program runs in, in the order TokenGroups lists them: Users, Administrators
+// (held for denying access only unless elevated), Everyone, the logon session, INTERACTIVE, CONSOLE LOGON, Authenticated Users,
+// This Organization and LOCAL. Programs look for INTERACTIVE to tell a user's session from a service.
+inline std::vector<std::vector<uint8_t>> interactive_group_sids()
+{
+	return {make_sid(5, {32, 545}), make_sid(5, {32, 544}), make_sid(1, {0}), make_sid(5, {5, 0, 1}), make_sid(5, {4}),
+		make_sid(2, {1}), make_sid(5, {11}), make_sid(5, {15}), make_sid(2, {0})};
+}
+
 }

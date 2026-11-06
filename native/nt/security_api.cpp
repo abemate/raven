@@ -527,13 +527,7 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		case 2: case 28: {
 			const bool logon = call.u32(1) == 28;
 			// The logon SID identifies the same session for every process in this runtime.
-			const auto session = make_sid(5, {5, 0, 1});
-			std::vector<std::vector<uint8_t>> sids{session};
-			// The groups of an interactive desktop logon: programs look for INTERACTIVE to tell a user's session from a service.
-			if (!logon) {
-				sids.insert(sids.begin(), {make_sid(5, {32, 545}), make_sid(5, {32, 544}), make_sid(1, {0})});
-				sids.insert(sids.end(), {make_sid(5, {4}), make_sid(2, {1}), make_sid(5, {11}), make_sid(5, {15}), make_sid(2, {0})});
-			}
+			const auto sids = logon ? std::vector<std::vector<uint8_t>>{make_sid(5, {5, 0, 1})} : interactive_group_sids();
 			const size_t first = width == 4 ? 4 : 8;
 			size_t total = first + record * sids.size();
 			for (const auto &item : sids)

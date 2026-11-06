@@ -26,5 +26,26 @@ int raven_entry(void)
 	if (NtAdjustPrivilegesToken(token, FALSE, &lacking, 0, NULL, NULL) != 0x106)
 		return 5;
 	CloseHandle(token);
+	// An interactive desktop logon: the account and INTERACTIVE are members (PDF-XChange saves its settings only for INTERACTIVE),
+	// Administrators is held for denying access only in an unelevated process, and a service logon is not held at all.
+	static const SID_IDENTIFIER_AUTHORITY nt = {SECURITY_NT_AUTHORITY};
+	PSID interactive, administrators, service;
+	BOOL member = FALSE;
+	if (!AllocateAndInitializeSid((PSID_IDENTIFIER_AUTHORITY)&nt, 1, SECURITY_INTERACTIVE_RID, 0, 0, 0, 0, 0, 0, 0, &interactive) ||
+		!AllocateAndInitializeSid((PSID_IDENTIFIER_AUTHORITY)&nt, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0,
+			&administrators) ||
+		!AllocateAndInitializeSid((PSID_IDENTIFIER_AUTHORITY)&nt, 1, SECURITY_SERVICE_RID, 0, 0, 0, 0, 0, 0, 0, &service))
+		return 6;
+	if (!CheckTokenMembership(NULL, interactive, &member) || !member)
+		return 7;
+	if (!CheckTokenMembership(NULL, ((TOKEN_USER *)user)->User.Sid, &member) || !member)
+		return 8;
+	if (!CheckTokenMembership(NULL, administrators, &member) || member)
+		return 9;
+	if (!CheckTokenMembership(NULL, service, &member) || member)
+		return 10;
+	FreeSid(interactive);
+	FreeSid(administrators);
+	FreeSid(service);
 	return 0;
 }
