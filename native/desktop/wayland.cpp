@@ -1138,7 +1138,8 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 		events.swap(state->pending);
 		for (auto &[handle,surface] : state->surfaces) {
 			if (surface->state_changed && !surface->is_popup) {
-				events.push_back({handle,0,0,0,DesktopEventKind::host_maximized,surface->maximized ? 1 : 0,0});
+				// The second value says whether the desktop also gave a size; without one a restored window picks its own (see windows.cpp).
+				events.push_back({handle,0,0,0,DesktopEventKind::host_maximized,surface->maximized ? 1 : 0,surface->resized && !surface->is_popup ? 1 : 0});
 				if (surface->maximized) state->maximized.insert(handle); else state->maximized.erase(handle);
 				surface->state_changed=false;
 			}

@@ -1129,6 +1129,16 @@ void NativeWindows::receive(const DesktopEvent &event)
 			window->style=(window->style & ~minimized) | maximized;
 		} else if (!event.x && (window->style & maximized)) {
 			window->style&=~maximized;
+			// Restored without a size (KWin does this when a maximized window is dragged by its caption): the window goes back to the
+			// rectangle it had before it was maximized, as Windows restores it, or the desktop moves a window that still fills the screen.
+			const auto restore=window->restore;
+			if (!event.y && restore.right>restore.left && restore.bottom>restore.top &&
+				(restore.right-restore.left!=window->outer.right-window->outer.left || restore.bottom-restore.top!=window->outer.bottom-window->outer.top)) {
+				const DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+(restore.right-restore.left),window->outer.top+(restore.bottom-restore.top)};
+				keep_host_window=true;
+				try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=false; throw; }
+				keep_host_window=false;
+			}
 		}
 		return;
 	}
