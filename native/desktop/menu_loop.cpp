@@ -396,7 +396,7 @@ uint64_t NativeWindows::track_popup_menu(uint64_t menu, uint32_t flags, int32_t 
 			if (!presentation.poll)
 				break;
 			for (const auto &event : presentation.poll(std::chrono::milliseconds(20)))
-				receive(event);
+				take_event(event);
 		}
 	} catch (...) {
 		menu_tracking = false;

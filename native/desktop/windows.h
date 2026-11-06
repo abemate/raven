@@ -255,6 +255,12 @@ private:
 	// Host input collected while threads waited, delivered by the next input_ready.
 	std::deque<DesktopEvent> pending_events;
 	void deliver_pending();
+	// Host input belongs to the thread of the window it is for (the capture, the focus or the surface under the pointer); a thread
+	// that collects it for another thread's window leaves it queued for that thread, as Windows queues input per thread.
+	uint32_t event_thread(const DesktopEvent &event) const;
+	bool event_for_me(const DesktopEvent &event);
+	bool pending_for_me();
+	void take_event(const DesktopEvent &event);
 	// PostQuitMessage codes by thread.
 	std::map<uint32_t,uint32_t> quits;
 	std::set<uint64_t> dirty_roots;
