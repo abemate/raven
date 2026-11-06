@@ -156,6 +156,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			state.origin_x = dc.origin_x; state.origin_y = dc.origin_y; state.position_x = dc.position_x; state.position_y = dc.position_y;
 			state.brush_org_x = dc.brush_org_x; state.brush_org_y = dc.brush_org_y; state.window_org_x = dc.window_org_x;
 			state.window_org_y = dc.window_org_y; state.viewport_org_x = dc.viewport_org_x; state.viewport_org_y = dc.viewport_org_y;
+			state.arc_direction = dc.arc_direction;
 			state.graphics_mode = dc.graphics_mode; state.world = dc.world;
 			dc.saved.push_back(std::move(state));
 			call.ret(dc.saved.size());
@@ -180,6 +181,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			dc.origin_x = state.origin_x; dc.origin_y = state.origin_y; dc.position_x = state.position_x; dc.position_y = state.position_y;
 			dc.brush_org_x = state.brush_org_x; dc.brush_org_y = state.brush_org_y; dc.window_org_x = state.window_org_x;
 			dc.window_org_y = state.window_org_y; dc.viewport_org_x = state.viewport_org_x; dc.viewport_org_y = state.viewport_org_y;
+			dc.arc_direction = state.arc_direction;
 			dc.user_dx = state.viewport_org_x - state.window_org_x; dc.user_dy = state.viewport_org_y - state.window_org_y;
 			dc.graphics_mode = state.graphics_mode; dc.world = state.world;
 			call.ret(1);
@@ -564,6 +566,43 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(objects.set_dc_pen_color(call.u32(1) & 0xffffff));
 		});
 	});
+	// The colors of the stock DC brush and DC pen, which SetDCBrushColor and SetDCPenColor change.
+	registry.add("GetDCBrushColor", 1, [=, this](ApiCall &call) {
+		guarded(call, clr_invalid, [&] {
+			require_dc(call, 0);
+			call.ret(objects.dc_brush_color());
+		});
+	});
+	registry.add("GetDCPenColor", 1, [=, this](ApiCall &call) {
+		guarded(call, clr_invalid, [&] {
+			require_dc(call, 0);
+			call.ret(objects.dc_pen_color());
+		});
+	});
+	// The direction a context draws arcs and rectangles in a path: AD_COUNTERCLOCKWISE (1) or AD_CLOCKWISE (2), kept with the DC.
+	registry.add("SetArcDirection", 2, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			auto &dc = require_dc(call, 0);
+			const uint32_t direction = call.u32(1);
+			if (direction != 1 && direction != 2)
+				throw uint32_t(87);
+			const uint32_t previous = dc.arc_direction;
+			dc.arc_direction = direction;
+			call.ret(previous);
+		});
+	});
+	registry.add("GetArcDirection", 1, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] { call.ret(require_dc(call, 0).arc_direction); });
+	});
+	// Drawing is not batched here, every call is done before it returns; the batch limit is still the setting a program reads back.
+	// 0 asks for the default, 20.
+	static uint32_t batch_limit = 20;
+	registry.add("GdiSetBatchLimit", 1, [](ApiCall &call) {
+		const uint32_t previous = batch_limit;
+		batch_limit = call.u32(0) ? call.u32(0) : 20;
+		call.ret(previous);
+	});
+	registry.add("GdiGetBatchLimit", 0, [](ApiCall &call) { call.ret(batch_limit); });
 
 	// ---- brushes and pens ----
 	// LOGBRUSH: style, color, then a hatch index or bitmap handle that is as wide as the program's pointers.
@@ -1325,6 +1364,42 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 			call.ret(1);
 		});
 	});
+	// TransparentBlt (msimg32, also gdi32's GdiTransparentBlt): the source stretched onto the destination, except the pixels of the
+	// transparent color, which leave the destination as it was.
+	for (const auto *name : {"TransparentBlt", "GdiTransparentBlt"})
+		registry.add(name, 11, [=, this](ApiCall &call) {
+			guarded(call, 0, [&] {
+				auto &destination = require_dc(call, 0);
+				auto &source_dc = require_dc(call, 5);
+				const auto *source = objects.bitmap(source_dc.bitmap);
+				if (!source)
+					throw uint32_t(6);
+				const int32_t dx = call.i32(1), dy = call.i32(2), dw = call.i32(3), dh = call.i32(4);
+				const int32_t sx = call.i32(6), sy = call.i32(7), sw = call.i32(8), sh = call.i32(9);
+				if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0)
+					throw uint32_t(87);
+				const uint32_t key = call.u32(10) & 0xffffff;
+				Painter painter(objects, destination);
+				const auto pixels = source->pixels();
+				const size_t stride = bitmap_row_bytes(*source);
+				for (int32_t y = 0; y < dh; ++y)
+					for (int32_t x = 0; x < dw; ++x) {
+						const int64_t device_x = int64_t(dx) + x + destination.origin_x, device_y = int64_t(dy) + y + destination.origin_y;
+						if (!painter.visible(device_x, device_y))
+							continue;
+						const int64_t source_x = sx + int64_t(x) * sw / dw, source_y = sy + int64_t(y) * sh / dh;
+						if (source_x < 0 || source_y < 0 || source_x >= source->width || source_y >= source->height)
+							continue;
+						const size_t row = source->top_down ? size_t(source_y) : source->height - 1 - size_t(source_y);
+						const uint32_t color = bitmap_color(*source, pixels.data() + row * stride, source_x) & 0xffffff;
+						if (color != key)
+							painter.plot(device_x, device_y, color, 13);
+					}
+				if (painter.changed())
+					touched(destination);
+				call.ret(1);
+			});
+		});
 	// msimg32's AlphaBlend is gdi32's GdiAlphaBlend under its older name.
 	registry.add("AlphaBlend", 11, [&registry](ApiCall &call) { registry.find("GdiAlphaBlend")->second(call); });
 	registry.add("PatBlt", 6, [=, this](ApiCall &call) {

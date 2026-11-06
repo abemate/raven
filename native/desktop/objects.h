@@ -108,6 +108,7 @@ struct DesktopDCState {
 	int32_t brush_org_x=0,brush_org_y=0,window_org_x=0,window_org_y=0,viewport_org_x=0,viewport_org_y=0;
 	uint32_t graphics_mode=1;
 	std::array<float,6> world{1,0,0,1,0,0};
+	uint32_t arc_direction=1;
 };
 
 struct DesktopDC {
@@ -139,6 +140,8 @@ struct DesktopDC {
 	// does not apply it.
 	uint32_t graphics_mode=1;
 	std::array<float,6> world{1,0,0,1,0,0};
+	// AD_COUNTERCLOCKWISE until SetArcDirection: the way arcs and rectangles are drawn in a path.
+	uint32_t arc_direction=1;
 	// The path a BeginPath bracket records: its figures as logical points, each closed when it becomes a region. Open while the
 	// bracket lasts; EndPath closes it for PathToRegion.
 	struct Path {
@@ -307,6 +310,8 @@ public:
 	// SetDCBrushColor and SetDCPenColor recolor the shared stock DC brush and pen; the previous color is returned.
 	uint32_t set_dc_brush_color(uint32_t color);
 	uint32_t set_dc_pen_color(uint32_t color);
+	uint32_t dc_brush_color() const { return stock_brushes[6].color; }
+	uint32_t dc_pen_color() const { return stock_pens[3].color; }
 	bool delete_font(uint64_t font);
 	const DesktopBrush *brush(uint64_t handle) const;
 	uint32_t system_color(int32_t index) const;
