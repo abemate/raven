@@ -825,6 +825,8 @@ void register_wininet_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("InternetSetStatusCallbackW", 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("InternetSetStatusCallbackA", 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("InternetSetStatusCallback", 2, [](ApiCall &call) { call.ret(0); });
+	// The host network is used directly, as for InternetGetConnectedState below: there is no connection to dial, so the attempt succeeds.
+	registry.add("InternetAttemptConnect", 1, [](ApiCall &call) { call.ret(0); });
 	// INTERNET_CONNECTION_LAN: the host network is used directly.
 	registry.add("InternetGetConnectedState", 2, [](ApiCall &call) {
 		if (call[0]) call.store<uint32_t>(call[0], 2);
