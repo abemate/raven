@@ -145,6 +145,12 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("IsCharLowerW", 1, [](ApiCall &call) { call.ret(std::iswlower(wint_t(call.u32(0) & 0xffff)) != 0); });
 	registry.add("IsCharUpperW", 1, [](ApiCall &call) { call.ret(std::iswupper(wint_t(call.u32(0) & 0xffff)) != 0); });
 	registry.add("MessageBeep", 1, [](ApiCall &call) { call.ret(1); });
+	// There is no sound output here, so a sound cannot be played: PlaySound and sndPlaySound fail as on a Windows without a sound
+	// device. Stopping what plays (no sound named) succeeds, as nothing does.
+	for (const auto *name : {"PlaySoundW", "PlaySoundA"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(call[0] ? 0 : 1); });
+	for (const auto *name : {"sndPlaySoundW", "sndPlaySoundA"})
+		registry.add(name, 2, [](ApiCall &call) { call.ret(call[0] ? 0 : 1); });
 	registry.add("LockWindowUpdate", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("NotifyWinEvent", 4, [](ApiCall &) {});
 	registry.add("FlashWindowEx", 1, [](ApiCall &call) { call.ret(0); });

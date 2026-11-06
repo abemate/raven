@@ -18,6 +18,7 @@
 #include <servprov.h>
 #include <propsys.h>
 #include <shellapi.h>
+#include <commctrl.h>
 #include <string.h>
 #include <stddef.h>
 
@@ -1684,4 +1685,26 @@ HRESULT WINAPI StrRetToBufW(STRRET *source, LPCITEMIDLIST item, LPWSTR buffer, U
 	}
 	buffer[size - 1] = 0;
 	return S_OK;
+}
+
+/* SHGetImageList: the system image list of a size, made on first use and kept, as Windows keeps them. The shell here hands out no
+ * system icon indices (SHGetFileInfo answers no SHGFI_SYSICONINDEX), so the list holds no images; a program draws from it what it
+ * adds itself. SHIL_LARGE is 32 pixels, SHIL_SMALL and SHIL_SYSSMALL 16, SHIL_EXTRALARGE 48 and SHIL_JUMBO 256. */
+HRESULT WINAPI SHGetImageList(int which, REFIID iid, void **out)
+{
+	static HIMAGELIST lists[5];
+	static const int sizes[5] = {32, 16, 48, 16, 256};
+	if (!out)
+		return E_POINTER;
+	*out = NULL;
+	if (which < 0 || which > 4)
+		return E_INVALIDARG;
+	if (!lists[which]) {
+		HIMAGELIST made = ImageList_Create(sizes[which], sizes[which], ILC_COLOR32 | ILC_MASK, 0, 8);
+		if (!made)
+			return E_OUTOFMEMORY;
+		if (InterlockedCompareExchangePointer((void **)&lists[which], made, NULL))
+			ImageList_Destroy(made);
+	}
+	return HIMAGELIST_QueryInterface(lists[which], iid, out);
 }
