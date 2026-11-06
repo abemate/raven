@@ -4,6 +4,7 @@
 #include "nt/text.h"
 
 #include <algorithm>
+#include <iostream>
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -1085,6 +1086,11 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 						break;
 					wanted.push_back(c);
 				}
+			}
+			if (std::getenv("RAVEN_TRACE_API")) {
+				std::string name;
+				for (const auto c : wanted) name.push_back(c < 128 ? char(c) : '?');
+				std::cerr << "  enumerate fonts: '" << name << "' charset " << charset << '\n';
 			}
 			if (!call[2]) {
 				call.ret(0);
