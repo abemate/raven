@@ -1010,6 +1010,28 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			write_rect(call, call[6], {0, 0, 0, 0});
 		call.ret(1);
 	});
+	// ValidateRgn(window, region): the region, in client coordinates, no longer needs painting; without one the whole client area.
+	registry.add("ValidateRgn", 2, [this](ApiCall &call) {
+		const auto *window = std::as_const(objects).window(call[0]);
+		if (!window) {
+			call.fail(1400);
+			return;
+		}
+		bool done;
+		if (!call[1]) {
+			done = objects.validate(call[0], DesktopRect{0, 0, window->width, window->height});
+		} else if (const auto *region = objects.region(call[1])) {
+			done = objects.validate(call[0], *region);
+		} else {
+			call.fail(6);
+			return;
+		}
+		if (!done) {
+			call.fail(8);
+			return;
+		}
+		call.ret(1);
+	});
 	registry.add("InvalidateRgn", 3, [this](ApiCall &call) {
 		if (!std::as_const(objects).window(call[0])) {
 			call.fail(1400);

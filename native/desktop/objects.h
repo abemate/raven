@@ -366,6 +366,8 @@ public:
 	bool set_title(uint64_t window,std::u16string title);
 	bool invalidate(uint64_t window,DesktopRect rect,bool erase);
 	bool validate(uint64_t window,DesktopRect rect);
+	// Takes a region, in client coordinates, out of what the window has to repaint.
+	bool validate(uint64_t window,const DesktopRegion &region);
 	bool start_paint(uint64_t window);
 	void finish_paint(uint64_t window);
 	// A paint whose surface went away while it ran, as a window resized inside its own paint: the window is no longer painting.

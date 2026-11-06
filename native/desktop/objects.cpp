@@ -475,6 +475,17 @@ bool DesktopObjects::validate(uint64_t handle,DesktopRect rect)
 	return true;
 }
 
+bool DesktopObjects::validate(uint64_t handle,const DesktopRegion &region)
+{
+	auto *record=window(handle); if (!record) return false;
+	DesktopRegion update; update.combine(record->update,region,4);
+	const auto previous=record->update.bytes(),current=update.bytes();
+	if (current>limit-used+previous) return false;
+	record->update=std::move(update); used=used-previous+current;
+	if (record->update.empty()) record->erase_pending=false;
+	return true;
+}
+
 bool DesktopObjects::start_paint(uint64_t handle)
 {
 	auto *record=window(handle);
