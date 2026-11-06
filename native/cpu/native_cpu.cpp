@@ -528,6 +528,9 @@ struct NativeProcess::State {
 	// Counts every change to the mappings, so that a reader can tell whether a protection it saw may have changed since.
 	uint64_t mapping_changes = 0;
 	std::vector<std::pair<uint64_t, uint64_t>> allocations;
+	// The mappings released last (base, size, when), newest last, so a fault on memory just let go can say so.
+	struct Released { uint64_t address, size; std::chrono::steady_clock::time_point when; };
+	std::vector<Released> released;
 	std::vector<std::pair<uint64_t, uint64_t>> image_allocations;
 	std::map<uint64_t, uint32_t> api_traps;
 	// 64-bit API breakpoints followed by RET: their calls return through it, without the runtime popping the return address.
@@ -1212,6 +1215,9 @@ void NativeProcess::unmap_memory(uint64_t address)
 	if (owned == state->allocations.end())
 		throw std::runtime_error("native release requires a dynamic allocation base");
 	const uint64_t end = address + owned->second;
+	state->released.push_back({address, owned->second, std::chrono::steady_clock::now()});
+	if (state->released.size() > 64)
+		state->released.erase(state->released.begin());
 	memory_syscall(SYS_munmap, address, owned->second);
 	std::erase_if(state->queued_blocks, [address](const auto &entry) { return entry.first == address; });
 	if (const auto view = state->shared_views.find(address); view != state->shared_views.end())
@@ -1222,6 +1228,31 @@ void NativeProcess::unmap_memory(uint64_t address)
 	state->api_traps.erase(state->api_traps.lower_bound(address), state->api_traps.lower_bound(end));
 	state->returning_traps.erase(state->returning_traps.lower_bound(address), state->returning_traps.lower_bound(end));
 	state->allocations.erase(owned);
+}
+
+std::string NativeProcess::describe_address(uint64_t address) const
+{
+	std::ostringstream text;
+	text << std::hex;
+	const std::pair<uint64_t, uint64_t> *below = nullptr;
+	for (const auto &allocation : state->allocations) {
+		if (address >= allocation.first && address < allocation.first + allocation.second) {
+			text << "inside mapping " << allocation.first << "+" << allocation.second << " at offset " << address - allocation.first;
+			return text.str();
+		}
+		if (allocation.first <= address && (!below || allocation.first > below->first))
+			below = &allocation;
+	}
+	if (below)
+		text << "past mapping " << below->first << "+" << below->second << " by " << address - (below->first + below->second);
+	const auto now = std::chrono::steady_clock::now();
+	for (auto entry = state->released.rbegin(); entry != state->released.rend(); ++entry)
+		if (address >= entry->address && address < entry->address + entry->size) {
+			text << (below ? "; " : "") << "in mapping " << entry->address << "+" << entry->size << " released "
+				<< std::dec << std::chrono::duration_cast<std::chrono::milliseconds>(now - entry->when).count() << " ms ago" << std::hex;
+			break;
+		}
+	return text.str().empty() ? std::string("outside every mapping") : text.str();
 }
 
 bool NativeProcess::memory_available(uint64_t address, size_t size) const

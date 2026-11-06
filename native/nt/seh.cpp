@@ -402,6 +402,8 @@ public:
 			uint64_t rsp = 0;
 			std::memcpy(&rsp, origin.data() + 0x98, 8);
 			describe_record(record, rsp);
+			if (le32(record, 0) == 0xc0000005U && le32(record, 0x18) >= 2)
+				std::fprintf(stderr, "raven:   address %s\n", context.process.describe_address(load64(record, 0x28)).c_str());
 			try {
 				const auto stack = context.process.read_memory(rsp, 0x400);
 				for (size_t at = 0; at + 8 <= stack.size(); at += 8) {

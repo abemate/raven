@@ -90,6 +90,9 @@ public:
 	// Transfers the same open file description, including device mapping permissions, instead of reopening it.
 	uint64_t map_descriptor(int descriptor, size_t size, uint64_t offset = 0);
 	bool memory_available(uint64_t address, size_t size) const;
+	// Where an address lies among the memory this process mapped for the guest: inside or just past a mapping, or in one released
+	// lately, for the report of a fault.
+	std::string describe_address(uint64_t address) const;
 	void discard_memory(uint64_t address, size_t size);
 	// Dynamic image mappings share LoadedImage storage; the loader owns initialization and lifetime.
 	void map_image(LoadedImage &image);
