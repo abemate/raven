@@ -48,7 +48,7 @@ Highlights:
   - An FlsSetValue guest fast path.
   - Wayland frame changes found by comparing rows directly instead of hashing them.
 
-`contrib/pdfx/` holds a personal launcher and setup script, and `scripts/native-pdfx.py` is a headless test harness for PDF-XChange. They are probably not upstream material.
+Skip the `PDFX-NOTES.md` and `README.md` commits when cherry-picking: they only describe this repository. `contrib/pdfx/` holds a personal launcher and setup script, and `scripts/native-pdfx.py` is a headless test harness for PDF-XChange. They are probably not upstream material.
 
 ## Against CONTRIBUTING.md
 
@@ -180,3 +180,5 @@ Thanks for Raven. Running an application as large as this natively on Wayland is
 - `82e4be4` Alt key tips show beside their ribbon buttons
 - `42c301e` Layered windows show the opacity and color key SetLayeredWindowAttributes gives
 - `36bde07` docs: list the drag and drop and page setup shell files
+- `f9d2d31` docs: add the AI caveat and where the branch stands against CONTRIBUTING.md
+- `b7495ce` docs: replace the README with a short pointer to the PDF-XChange changes
