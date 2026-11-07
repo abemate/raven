@@ -1260,6 +1260,12 @@ void NativeWindows::receive(const DesktopEvent &event)
 		if (pressed && !previous && (key.code==0x14 || key.code==0x90 || key.code==0x91)) vk_async[key.code]^=1;
 		return;
 	}
+	if (event.kind==DesktopEventKind::host_maximized && std::getenv("RAVEN_TRACE_DRAG"))
+		if (const auto *traced=std::as_const(objects).window(event.window))
+			fprintf(stderr,"drag window %llx %s by the desktop (style maximized %d, outer %d,%d %dx%d, restore %dx%d, size given %d)\n",
+				(unsigned long long)event.window,event.x ? "maximized" : "restored",(traced->style & 0x01000000U) ? 1 : 0,traced->outer.left,
+				traced->outer.top,traced->outer.right-traced->outer.left,traced->outer.bottom-traced->outer.top,
+				traced->restore.right-traced->restore.left,traced->restore.bottom-traced->restore.top,int(event.y));
 	if (event.kind==DesktopEventKind::host_maximized) {
 		// The style follows the state the desktop gave the window, so the resize that comes next is SIZE_MAXIMIZED or SIZE_RESTORED;
 		// a window maximized this way remembers where to restore to, as ShowWindow's maximizing does.
@@ -2096,10 +2102,17 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf030U) { show_window(args[0],3); return 0; }
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf020U) { show_window(args[0],6); return 0; }
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf120U) { show_window(args[0],9); return 0; }
-		// SC_MOVE and SC_SIZE hand the window to the compositor, which moves or sizes host windows itself.
-		if (((uint32_t(args[2]) & 0xfff0U)==0xf010U || (uint32_t(args[2]) & 0xfff0U)==0xf000U) && presentation.interactive && !window->parent &&
-			!(window->style & 0x01000000U)) {
-			presentation.interactive(args[0],(uint32_t(args[2]) & 0xfff0U)==0xf010U ? 0 : 10);
+		// SC_MOVE and SC_SIZE hand the window to the compositor, which moves or sizes host windows itself. SC_MOVE sent for a caption
+		// drag (0xf012, as programs that draw their own caption send it) also drags a maximized window, which the desktop restores
+		// once the pointer moves, as Windows does; only while the button is held (action 11), so it never waits for another press.
+		const uint32_t command=uint32_t(args[2]) & 0xfff0U;
+		const bool caption_drag=(uint32_t(args[2]) & 0xffffU)==0xf012U;
+		if (std::getenv("RAVEN_TRACE_DRAG") && (command==0xf010U || command==0xf000U))
+			fprintf(stderr,"drag program sends %s %x for %llx (maximized %d)\n",command==0xf010U ? "SC_MOVE" : "SC_SIZE",uint32_t(args[2]),
+				(unsigned long long)args[0],(window->style & 0x01000000U) ? 1 : 0);
+		if ((command==0xf010U || command==0xf000U) && presentation.interactive && !window->parent &&
+			(!(window->style & 0x01000000U) || caption_drag)) {
+			presentation.interactive(args[0],caption_drag ? 11 : command==0xf010U ? 0 : 10);
 			return 0;
 		}
 		return 0;

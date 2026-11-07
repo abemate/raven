@@ -130,7 +130,8 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 		return;
 	}
 	if (message==0x201) {
-		if (std::getenv("RAVEN_TRACE_MSG")) fprintf(stderr,"frame press %llx hit %llu style %x\n",(unsigned long long)handle,(unsigned long long)hit,window->style);
+		if (std::getenv("RAVEN_TRACE_MSG") || std::getenv("RAVEN_TRACE_DRAG"))
+			fprintf(stderr,"drag frame press %llx hit %llu style %x\n",(unsigned long long)handle,(unsigned long long)hit,window->style);
 		pressed_frame_hit=hit; pressed_frame_window=handle;
 		// A drag that starts on the caption or a sizing border continues in the compositor (maximized windows do not move).
 		// A tool window shown on its owner is moved here: the compositor moves only the host windows it places itself.

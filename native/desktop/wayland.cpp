@@ -34,6 +34,22 @@
 
 namespace raven {
 
+// RAVEN_TRACE_DRAG follows title-bar drags and the compositor's answers: presses, moves and resizes handed to the compositor, configures
+// with their size and maximized state, Raven's maximize requests, and gaps in which Raven did not read the compositor (a busy program).
+static bool trace_drag()
+{
+	static const bool enabled=std::getenv("RAVEN_TRACE_DRAG")!=nullptr;
+	return enabled;
+}
+
+static double trace_clock()
+{
+	static const auto start=std::chrono::steady_clock::now();
+	return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+}
+
+#define DRAG_TRACE(...) do { if (trace_drag()) { std::fprintf(stderr,"drag %9.1f ",trace_clock()); std::fprintf(stderr,__VA_ARGS__); std::fputc('\n',stderr); } } while (0)
+
 #ifdef RAVEN_WAYLAND_CURSOR_SHAPE
 // The named shape that looks like a system cursor of Windows; the ones without a counterpart show the default pointer.
 static uint32_t cursor_shape(uint32_t cursor)
@@ -372,7 +388,8 @@ struct WaylandPresentation::State {
 					state.pointer_x=coordinate(x); state.pointer_y=coordinate(y); state.pointer_event(DesktopEventKind::pointer_motion);
 				};
 				value.leave=[](void *data,wl_pointer *,uint32_t,wl_surface *) {
-					auto &state=*static_cast<State *>(data); state.release_held(); state.pointer_window=0; state.pointer_inside=false;
+					auto &state=*static_cast<State *>(data); DRAG_TRACE("pointer leaves window %llx",(unsigned long long)state.pointer_window);
+					state.release_held(); state.pointer_window=0; state.pointer_inside=false;
 				};
 				value.motion=[](void *data,wl_pointer *,uint32_t,wl_fixed_t x,wl_fixed_t y) {
 					auto &state=*static_cast<State *>(data); state.pointer_x=coordinate(x); state.pointer_y=coordinate(y);
@@ -383,11 +400,14 @@ struct WaylandPresentation::State {
 					state.last_serial=serial;
 					if (pressed) { state.press_serial=serial; state.button_serial=serial; state.button_window=state.pointer_window; }
 					state.buttons_down=pressed ? state.buttons_down+1 : state.buttons_down ? state.buttons_down-1 : 0;
+					DRAG_TRACE("button %x %s window %llx at %d,%d serial %u down %u",button,pressed ? "press" : "release",
+						(unsigned long long)state.pointer_window,state.pointer_x,state.pointer_y,serial,state.buttons_down);
 					if (pressed && state.pending_move) {
 						const auto found=state.surfaces.find(state.pending_move);
 						const bool here=state.pending_move==state.pointer_window;
 						state.pending_move=0;
 						if (here && found!=state.surfaces.end() && found->second->role) {
+							DRAG_TRACE("menu move starts on press, window %llx",(unsigned long long)found->first);
 							xdg_toplevel_move(found->second->role,state.seat,serial);
 							state.buttons_down=0;
 							return;
@@ -1110,9 +1130,11 @@ struct WaylandPresentation::State {
 	void maximize(uint64_t handle,bool wanted) {
 		if (wanted) maximized.insert(handle); else maximized.erase(handle);
 		const auto found=surfaces.find(handle);
+		DRAG_TRACE("program asks %s for %llx (surface %s, compositor state %s)",wanted ? "maximize" : "restore",(unsigned long long)handle,
+			found==surfaces.end() ? "none" : "yes",found==surfaces.end() ? "-" : found->second->maximized ? "maximized" : "normal");
 		if (found==surfaces.end() || !found->second->role || found->second->maximized==wanted) return;
 		// The desktop changed the state itself and the program has not been told yet: its change stands.
-		if (found->second->state_changed) return;
+		if (found->second->state_changed) { DRAG_TRACE("  ignored: the compositor changed it and the program is not told yet"); return; }
 		auto &window=*found->second;
 		window.maximized=wanted;
 		window.maximize_requested=std::chrono::steady_clock::now();
@@ -1120,7 +1142,9 @@ struct WaylandPresentation::State {
 		if (wanted) xdg_toplevel_set_maximized(window.role);
 		else xdg_toplevel_unset_maximized(window.role);
 		const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+		const auto asked=trace_clock();
 		while (!window.configured && !window.closed && std::chrono::steady_clock::now()<end) events(std::chrono::milliseconds(20));
+		DRAG_TRACE("  compositor answered after %.1f ms (configured %d closed %d)",trace_clock()-asked,window.configured ? 1 : 0,window.closed ? 1 : 0);
 		if (!window.configured || window.closed) throw std::runtime_error("Wayland maximization configuration failed");
 	}
 
@@ -1153,6 +1177,8 @@ struct WaylandPresentation::State {
 					for (const auto *state=static_cast<const uint32_t *>(states->data);
 						reinterpret_cast<const char *>(state)<static_cast<const char *>(states->data)+states->size;++state)
 						if (*state==XDG_TOPLEVEL_STATE_MAXIMIZED) host_maximized=true;
+					DRAG_TRACE("configure %dx%d %s (Raven thinks %s, size now %ux%u)",width,height,host_maximized ? "maximized" : "normal",
+						window.maximized ? "maximized" : "normal",window.width,window.height);
 					if (host_maximized!=window.maximized && std::chrono::steady_clock::now()-window.maximize_requested>std::chrono::seconds(1)) {
 						window.maximized=host_maximized;
 						window.state_changed=true;
@@ -1193,7 +1219,10 @@ struct WaylandPresentation::State {
 		}
 		if (window.closed) throw std::runtime_error("Wayland surface cannot accept this frame");
 		if (window.maximized && window.pending_width && window.pending_height &&
-			(window.pending_width!=width || window.pending_height!=height)) return;
+			(window.pending_width!=width || window.pending_height!=height)) {
+			DRAG_TRACE("frame %ux%u for %llx dropped: the compositor wants %ux%u",width,height,(unsigned long long)handle,window.pending_width,window.pending_height);
+			return;
+		}
 		if (window.pending_width==width && window.pending_height==height) window.resized=false;
 		window.width=width; window.height=height;
 		xdg_surface_set_window_geometry(window.shell,0,0,int32_t(width),int32_t(height));
@@ -1248,17 +1277,25 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 	[this](std::chrono::milliseconds budget) {
 		std::vector<DesktopEvent> events;
 		if (!state->display) { if (budget.count()>0) ::poll(nullptr,0,int(budget.count())); return events; }
+		if (trace_drag()) {
+			static double last=0;
+			const auto now=trace_clock();
+			if (last && now-last>250) DRAG_TRACE("Raven did not read the compositor for %.0f ms (the program was busy)",now-last);
+			last=now;
+		}
 		state->events(budget);
 		events.swap(state->pending);
 		for (auto &[handle,surface] : state->surfaces) {
 			if (surface->state_changed && !surface->is_popup) {
 				// The second value says whether the desktop also gave a size; without one a restored window picks its own (see windows.cpp).
 				events.push_back({handle,0,0,0,DesktopEventKind::host_maximized,surface->maximized ? 1 : 0,surface->resized && !surface->is_popup ? 1 : 0});
+				DRAG_TRACE("program told %llx is now %s by the compositor",(unsigned long long)handle,surface->maximized ? "maximized" : "restored");
 				if (surface->maximized) state->maximized.insert(handle); else state->maximized.erase(handle);
 				surface->state_changed=false;
 			}
 			if (surface->resized && !surface->is_popup) {
 				events.push_back({handle,0,0,0,DesktopEventKind::resize,int32_t(surface->pending_width),int32_t(surface->pending_height)});
+				DRAG_TRACE("program told %llx to resize to %ux%u",(unsigned long long)handle,surface->pending_width,surface->pending_height);
 				surface->resized=false;
 			}
 			if (surface->closed && !surface->close_posted) {
@@ -1279,7 +1316,10 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 				state->buttons_down,state->held.size(),found->second->maximized ? 1 : 0,state->press_serial,state->last_serial);
 		// A drag on the frame the user already let go of starts nothing: the compositor would begin a move or resize that only the
 		// next click ends, and that click would be lost. Only the window menu's Move (action 0) waits for the next press.
+		DRAG_TRACE("program starts %s of %llx: buttons down %u, maximized %d, press serial %u",action==0 || action==11 ? "move" : "resize",
+			(unsigned long long)handle,state->buttons_down,found->second->maximized ? 1 : 0,state->press_serial);
 		if (!state->buttons_down) {
+			DRAG_TRACE("  not handed over: the button is already up");
 			if (action==0) state->pending_move=handle;
 			wl_display_flush(state->display);
 			return;
