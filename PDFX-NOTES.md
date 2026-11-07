@@ -1,0 +1,131 @@
+# PDF-XChange Editor 11 on Raven
+
+This branch runs **PDF-XChange Editor 11** (the portable x64 release) under Raven. It is used as a daily PDF editor on KDE Plasma (Wayland).
+
+## What works
+
+- Viewing, scrolling and zooming, with the thumbnail, bookmark and comment panes.
+- **Comments:** highlight, shapes, stamps, typewriter and sticky notes, then saving with annotations.
+- **Forms:** filling them in, and creating fields.
+- **Pages:** insert, delete, extract, move, rotate, crop, merge and split.
+- **Text:** editing, search, spell check and OCR.
+- **Printing** through CUPS, with landscape pages and bold or italic text.
+- **File dialogs:** the desktop's own Open and Save As, through the XDG portal.
+- **Drag and drop** with the desktop's file manager, in both directions.
+- **Keyboard:** custom shortcuts, including Ctrl+Alt chords, and the ribbon's Alt key tips.
+- **Window handling:** maximizing, tiling, and dragging a maximized window by its title bar.
+
+## What's here
+
+There are 73 commits on top of `main` as of `f56b75b`. Together they touch 92 files, adding about 7,500 lines and removing about 300. One of them is a cherry-pick of PR #140 by Raymond Bennett, with his authorship kept. Most of the others are general Raven fixes that PDF-XChange happened to expose, and nearly every fix comes with a regression test under `testdata/native_loader` and `native/desktop/*_test.cpp`.
+
+Highlights:
+
+- **Window management:**
+  - WM_MOVE and WM_SIZE now come from WM_WINDOWPOSCHANGED.
+  - Raven follows the compositor's maximize and restore, including restores that come without a size.
+  - Update regions are clipped to the client area, and siblings repaint when a child window that covered them hides, moves or is destroyed.
+  - Wayland: owned popups and dialogs, unowned tool popups placed by the program, and layered window opacity and color key.
+- **Input:**
+  - Ctrl+Alt+key arrives as WM_KEYDOWN, and left and right modifiers keep separate state, as on Windows.
+  - The mouse wheel goes to the hovered window.
+  - Host input is routed to the window's own thread, which fixes a cross-thread WM_NCHITTEST deadlock.
+  - Owned dialogs keep the keyboard and hand it back when they close.
+- **GDI and text:**
+  - StretchDIBits and ExtTextOut honour mapping modes and world transforms.
+  - Bold and italic faces are enumerated correctly.
+  - GetCharacterPlacement, GetRandomRgn, ScrollDC, TransparentBlt and others are added.
+  - Uniscribe and text measuring are served without stopping the guest.
+- **New pieces:**
+  - Printing through CUPS: printer DCs, PageSetupDlgW.
+  - The XDG portal file chooser.
+  - Wayland drag and drop in both directions.
+  - Fault reports that say which mapping or bitmap a faulting address belongs to.
+  - RAVEN_TRACE_DRAG.
+- **Performance:**
+  - An FlsSetValue guest fast path.
+  - Wayland frame changes found by comparing rows directly instead of hashing them.
+
+`contrib/pdfx/` holds a personal launcher and setup script, and `scripts/native-pdfx.py` is a headless test harness for PDF-XChange. They are probably not upstream material.
+
+## About upstreaming
+
+Nothing here needs to go upstream; this branch will keep being used as it is. It just seemed a shame for the work to sit unseen. If anything is useful, cherry-pick it, rework it, or ignore it as you see fit. The work was done with Claude, so the style and tests should look familiar.
+
+Thanks for Raven. Running an application as large as this natively on Wayland is quite a feat of the project.
+
+## Commits (oldest first)
+
+- `53374dd` fix: publish the system libraries and exports PDF-XChange Editor's core imports
+- `4287b19` feat: answer GetSystemTimeAdjustment with the default clock period
+- `7cfa4fc` feat: add GetDllDirectoryW and GetDllDirectoryA
+- `d2c85e8` feat: add mscms GetColorDirectoryW and GetColorDirectoryA
+- `56a2b56` feat: add GetCharacterPlacement, GetFontLanguageInfo and ScriptGetLogicalWidths
+- `9743ec3` feat: add OleRun to the shell component
+- `fbae34d` feat: map virtual keys through MapVirtualKeyEx
+- `a32b6f6` feat: add StrRStrIW and StrRStrIA
+- `7816aed` feat: add GetRandomRgn
+- `c5c7d08` test: drive PDF-XChange Editor headless through Raven
+- `a02512e` feat: add GetGUIThreadInfo
+- `9a53c9b` feat: add GetScaleFactorForMonitor
+- `f436954` feat: hand out whole font files and name glyphs by the face's own indices
+- `d28e511` test: open given PDFs and check drawn page text in the PDF-XChange run
+- `aab41a2` feat: trace the family a font enumeration asks for
+- `27f8513` test: keep PDF-XChange runs small and add a document with embedded fonts
+- `964d523` feat: add CryptSetProvParam
+- `0c3d053` fix: share the file's pages with every writable view of its section
+- `51a2287` test: annotate, save and open the print dialog in the PDF-XChange run
+- `2569395` chore: add a personal launcher and print helper for PDF-XChange Editor
+- `07598b8` chore: add a setup script that builds Raven and installs PDF-XChange Editor
+- `7e15285` feat: add ScrollDC
+- `c31e922` fix: let GetTempFileName make a name without a prefix
+- `adc20ad` test: run PDF-XChange on a headless screen of a given size
+- `254554e` feat: add ValidateRgn
+- `266f512` feat: resume COM class objects and count local server references
+- `6b8030b` feat: add InternetAttemptConnect
+- `b9b8f19` feat: add shlwapi string and path helpers PDF-XChange Editor imports
+- `833fe58` feat: add StrRetToBufW, OleLockRunning and OleSetContainedObject to the shell component
+- `854fa85` feat: add title bar info, process layout, animated rects and system message broadcast
+- `f8cc222` feat: add TransparentBlt, DC brush and pen colors, arc direction and the GDI batch limit
+- `478422a` chore: show which Raven build the PDF-XChange launcher runs
+- `97ae83b` feat: answer the printer calls as a Windows with no printer installed
+- `d5e2262` chore: log every PDF-XChange run, menu launches included, into the shared folder
+- `e46732f` fix: show drop-down shadows beside their list and deliver clicks to popups
+- `49bb75e` feat: drag and drop inside a program, the system image lists and PlaySound
+- `9c6993c` feat: say where a faulting address lies among the guest's mappings
+- `daa4306` fix: follow the desktop's maximizing and restoring of a window
+- `1d49fae` test: add a generator of a PDF form for the PDF-XChange checks
+- `9ab09f8` fix: send the mouse wheel to the window under the pointer
+- `d740d43` feat: show the desktop's own file dialog through the XDG portal
+- `0d79045` Printing through CUPS; path figures, mapping modes and large fills
+- `7034474` Send WM_MOVE and WM_SIZE from WM_WINDOWPOSCHANGED during SetWindowPos
+- `1dd14f2` StretchDIBits honours the DC's mapping mode and world transform
+- `9e72494` Send non-client mouse messages; drag maximized windows by the caption
+- `02cbf63` Printer contexts answer GetDeviceCaps themselves, not the display fast path
+- `3955926` PageSetupDlgW in the shell component
+- `40d7163` Wayland: keep owned windows above their owners
+- `887c803` Crash reports name the bitmap a faulting address belongs to
+- `8adea6f` Wayland: no move or resize for a frame press already let go
+- `fd32d03` RAVEN_TRACE_MSG reports each frame drag handed to the compositor
+- `ae62aae` Send a window's maximized state to the desktop only when the program changes it
+- `6438243` A window the desktop restores without a size goes back to its restored rectangle
+- `893146d` SHILCreateFromPath and SHOpenFolderAndSelectItems; reap xdg-open
+- `614b7a2` Printed text under mapping modes and world transforms; bold and italic faces
+- `8e98a01` Enumerated italic faces report lfItalic and tmItalic 255
+- `c1fef69` CheckTokenMembership answers from the token's interactive logon groups
+- `80fe3fa` The update region stays inside the client area
+- `238b9f0` Fault reports name the mapping after the address; paint trace shows the client size
+- `cd2f38a` FlsSetValue stores into the thread's mirror array without a stop
+- `c2e5ed5` Wayland frames find their changed rows by comparing, not hashing
+- `4b354ca` Files drag in from the desktop and pages drag out to it
+- `7cccfca` Maximized windows do not size from their borders
+- `eb72e1b` Host input waits for the thread of the window it is for
+- `61312eb` Owned dialogs keep the keyboard and hand it back when they close
+- `ce6ccf8` Text measuring is served without stopping the guest
+- `7535965` Ctrl+Alt keys come as plain key messages, as on Windows
+- `7bd3acc` Left and right modifier keys keep their own state
+- `0188d08` RAVEN_TRACE_DRAG follows title-bar drags; caption SC_MOVE drags maximized windows
+- `60d3d7c` Windows beneath a child that leaves repaint the uncovered area
+- `03210ef` A maximized window dragged by its caption comes back at a normal size
+- `82e4be4` Alt key tips show beside their ribbon buttons
+- `42c301e` Layered windows show the opacity and color key SetLayeredWindowAttributes gives
