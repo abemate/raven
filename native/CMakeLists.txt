@@ -1242,6 +1242,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         add_custom_target(maximized_hit_fixture ALL DEPENDS ${MAXIMIZED_HIT_FIXTURE})
         add_test(NAME native_maximized_hit COMMAND raven --run-process --execution=native ${MAXIMIZED_HIT_FIXTURE})
         set_tests_properties(native_maximized_hit PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        set(OWNER_FOCUS_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/owner-focus.exe)
+        add_custom_command(OUTPUT ${OWNER_FOCUS_FIXTURE}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                -o ${OWNER_FOCUS_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/owner_focus_client.c -lkernel32 -luser32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/owner_focus_client.c VERBATIM)
+        add_custom_target(owner_focus_fixture ALL DEPENDS ${OWNER_FOCUS_FIXTURE})
+        add_test(NAME native_owner_focus COMMAND raven --run-process --execution=native ${OWNER_FOCUS_FIXTURE})
+        set_tests_properties(native_owner_focus PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         set(CREATION_DC_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/creation-dc.exe)
         add_custom_command(OUTPUT ${CREATION_DC_FIXTURE}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector

@@ -168,6 +168,12 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 		objects.update_window_dcs(handle);
 	if (show && !window->parent && activate_it && std::as_const(objects).window(handle) && !(window->ex_style & 0x08000000U))
 		set_focus(handle);
+	// Hiding the active window activates its owner, and the keyboard leaves the hidden window with the activation.
+	if (hide && previous && !window->parent && active == handle) {
+		activate_other(handle);
+		if (focus == handle || objects.is_child(handle, focus))
+			set_focus(0);
+	}
 	window = objects.window(handle);
 	if (!window)
 		throw uint32_t(1400);

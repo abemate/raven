@@ -317,6 +317,7 @@ private:
 	std::optional<Message> key_translation;
 	void activate(uint64_t window);
 	uint64_t set_focus(uint64_t window);
+	void activate_other(uint64_t handle);
 	void receive(const DesktopEvent &event);
 	// Input that arrives while a button press is being placed in the queue (the program runs during its hit test and parent notifications
 	// and may pump): it is taken in after the press, so the program sees the input in the order it happened.

@@ -1126,6 +1126,8 @@ void NativeWindows::receive(const DesktopEvent &event)
 		return;
 	}
 	if (event.kind==DesktopEventKind::keyboard_focus) {
+		if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"keyboard focus event %llx, focus %llx root %llx\n",(unsigned long long)event.window,
+			(unsigned long long)focus,(unsigned long long)(focus ? objects.window_root(focus) : 0));
 		std::array<bool,256> initial{};
 		for (const auto code : event.held_keys) {
 			if (code>=initial.size() || initial[code]) throw std::runtime_error("invalid initial keyboard key state");
@@ -1175,6 +1177,21 @@ void NativeWindows::receive(const DesktopEvent &event)
 				return;
 			}
 		}
+		// A window shown as a popup on the host window the keyboard entered (an owned tool window such as PXC's Customize Toolbars)
+		// cannot hold the keyboard itself: the compositor gives it to the host window under it, and the program's focus stays.
+		if (event.window && focus && std::as_const(objects).window(focus) && objects.window_visible(focus)) {
+			auto shown=objects.window_root(focus);
+			for (unsigned depth=0;shown && shown!=event.window && depth<16;++depth) {
+				const auto *record=std::as_const(objects).window(shown);
+				shown=record && shown_on_owner(*record) ? objects.window_root(host_owner(*record)) : 0;
+			}
+			if (shown==event.window && objects.window_root(focus)!=event.window) {
+				focus_leaving=false;
+				key_down=initial; key_translation.reset();
+				deliver_moving_keys();
+				return;
+			}
+		}
 		focus_leaving=false;
 		key_down=initial; key_translation.reset();
 		if (!event.window) { set_focus(0); activate(0); }
@@ -1183,6 +1200,8 @@ void NativeWindows::receive(const DesktopEvent &event)
 		return;
 	}
 	if (event.kind==DesktopEventKind::key) {
+		if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"key %u %s -> focus %llx visible %d thread %u\n",event.message,event.wparam ? "down" : "up",
+			(unsigned long long)focus,focus && std::as_const(objects).window(focus) ? int(objects.window_visible(focus)) : -1,environment.thread_id());
 		// Keys go to the focus window whichever of the program's host windows the compositor reports them on. The compositor sends keys
 		// only to the program that has the keyboard, so a key that comes without a window (the keyboard appeared after the compositor
 		// focused the window and no enter followed) is the program's too. With no focus left (a dialog ended by the previous key), the
@@ -1357,7 +1376,11 @@ bool NativeWindows::shown_on_owner(const DesktopWindow &window) const
 	const auto owner=host_owner(window);
 	if (!owner || window.parent || !objects.window_visible(owner))
 		return false;
-	return ((window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U) || (window.ex_style & 0x80U);
+	if (((window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U) || (window.ex_style & 0x80U)) return true;
+	// A window owned by one shown on its owner (the Properties dialog PXC's Customize Toolbars opens) is shown there too: as a host
+	// window of its own, the compositor would stack it under the popup that owns it, where the program waits for it unseen.
+	const auto *owner_window=std::as_const(objects).window(owner);
+	return owner_window && owner_window!=&window && shown_on_owner(*owner_window);
 }
 
 void NativeWindows::release_held_input()
@@ -1771,6 +1794,7 @@ uint64_t NativeWindows::set_focus(uint64_t handle)
 	if (handle && (!std::as_const(objects).window(handle) || std::as_const(objects).window(handle)->destroying)) throw uint32_t(1400);
 	if (handle) activate(handle);
 	const auto previous=focus;
+	if (std::getenv("RAVEN_TRACE_KEYS") && previous!=handle) fprintf(stderr,"set_focus %llx -> %llx (thread %u)\n",(unsigned long long)previous,(unsigned long long)handle,environment.thread_id());
 	if (previous==handle) return previous;
 	// A handler may move the focus again; the nested change completes first and the outer one stops when it was superseded.
 	++focusing;
@@ -1781,6 +1805,18 @@ uint64_t NativeWindows::set_focus(uint64_t handle)
 		--focusing;
 		return previous;
 	} catch (...) { --focusing; throw; }
+}
+
+// The active window going away hands the activation to its owner when the owner can take it, as Windows does: closing a dialog leaves
+// the keyboard with the window that opened it. A dialog shown as a popup on its owner's host window never had the keyboard from the
+// compositor, so nothing else would give it back.
+void NativeWindows::activate_other(uint64_t handle)
+{
+	const auto *window=std::as_const(objects).window(handle);
+	const auto owner=window && window->owner ? objects.window_root(window->owner) : 0;
+	const auto *candidate=owner && owner!=handle ? std::as_const(objects).window(owner) : nullptr;
+	if (candidate && !candidate->destroying && objects.window_visible(owner) && !(candidate->style & 0x08000000U)) activate(owner);
+	else activate(0);
 }
 
 bool NativeWindows::destroy(uint64_t handle)
@@ -1795,7 +1831,7 @@ bool NativeWindows::destroy(uint64_t handle)
 	if (!window || window->destroying) throw uint32_t(5);
 	window->destroying=true;window->visible=false;window->style&=~0x10000000U;
 	withdraw_window(handle);
-	if (active==handle) activate(0);
+	if (active==handle) activate_other(handle);
 	if (focus==handle || objects.is_child(handle,focus)) set_focus(0);
 	parent_notify(handle,2);
 	send(handle,2,0,0);
