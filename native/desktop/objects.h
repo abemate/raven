@@ -295,6 +295,9 @@ struct DesktopWindow {
 	// on its surface, with their alpha, as Windows composes such a window (and sends it no WM_PAINT). Empty for any other window.
 	std::vector<uint8_t> layered;
 	int32_t layered_width = 0, layered_height = 0;
+	// SetLayeredWindowAttributes: LWA_COLORKEY (1) makes the key color transparent, LWA_ALPHA (2) gives the painted window one opacity.
+	uint32_t layer_flags = 0, layer_key = 0;
+	uint8_t layer_alpha = 255;
 	// SetWindowDisplayAffinity: whether the window asks to be left out of screen captures.
 	uint32_t display_affinity = 0;
 	// An overlapped window created hidden receives WM_SIZE and WM_MOVE when it is first shown rather than while it is created.

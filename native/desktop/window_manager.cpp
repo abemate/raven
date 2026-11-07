@@ -1107,6 +1107,14 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			return;
 		}
 		(*layered)[call[0]] = {call.u32(1), call.u32(2) & 0xff, call.u32(3)};
+		// The window now shows what is painted on it, with these attributes, instead of an UpdateLayeredWindow picture.
+		auto *window = objects.window(call[0]);
+		window->layer_key = call.u32(1) & 0xffffff;
+		window->layer_alpha = uint8_t(call.u32(2));
+		window->layer_flags = call.u32(3) & 3;
+		window->layered.clear();
+		window->layered_width = window->layered_height = 0;
+		drawing(call[0]);
 		call.ret(1);
 	});
 	registry.add("GetLayeredWindowAttributes", 4, [this, layered](ApiCall &call) {

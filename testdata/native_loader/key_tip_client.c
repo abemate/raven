@@ -11,9 +11,11 @@ static LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM 
 		KillTimer(window,1);
 		RECT outer;
 		GetWindowRect(main_window,&outer);
-		HWND tip=CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,L"raven.key.tip",L"",WS_POPUP | WS_DISABLED,
+		HWND tip=CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED,L"raven.key.tip",L"",WS_POPUP | WS_DISABLED,
 			0,0,20,14,NULL,NULL,GetModuleHandleW(NULL),NULL);
 		if (!tip) { PostQuitMessage(2); return 0; }
+		/* PXC's splitter bar: the same kind of window, painted white here and shown at 150 of 255 opacity. */
+		SetLayeredWindowAttributes(tip,0,150,LWA_ALPHA);
 		SetWindowPos(tip,HWND_TOPMOST,outer.left+30,outer.top+40,20,14,SWP_NOACTIVATE);
 		ShowWindow(tip,SW_SHOWNA);
 		UpdateWindow(tip);

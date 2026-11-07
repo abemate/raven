@@ -273,7 +273,26 @@ void NativeWindows::present(uint64_t handle, bool force)
 	// A layered window UpdateLayeredWindow filled shows that picture, with its alpha.
 	const bool translucent=!window->layered.empty() && window->layered_width==int32_t(bitmap->width) && window->layered_height==int32_t(bitmap->height);
 	if (translucent) pixels=window->layered;
-	if (presentation.translucent) presentation.translucent(handle,translucent);
+	// A layered window given attributes instead (SetLayeredWindowAttributes) shows what is painted on it, its key color transparent
+	// and the rest at the one opacity it was given: PXC's splitter bar is black at 150 of 255, a shade over the document.
+	std::vector<uint8_t> attributed;
+	const bool attributes=!translucent && (window->ex_style & 0x80000U) && window->layer_flags;
+	if (attributes) {
+		attributed.assign(pixels.begin(),pixels.end());
+		const uint32_t opacity=(window->layer_flags & 2) ? window->layer_alpha : 255;
+		for (size_t at=0;at+3<attributed.size();at+=4) {
+			auto *pixel=attributed.data()+at;
+			const uint32_t color=uint32_t(pixel[2]) | uint32_t(pixel[1])<<8 | uint32_t(pixel[0])<<16;
+			if ((window->layer_flags & 1) && color==window->layer_key) {
+				pixel[0]=pixel[1]=pixel[2]=pixel[3]=0;
+				continue;
+			}
+			pixel[0]=uint8_t(pixel[0]*opacity/255); pixel[1]=uint8_t(pixel[1]*opacity/255); pixel[2]=uint8_t(pixel[2]*opacity/255);
+			pixel[3]=uint8_t(opacity);
+		}
+		pixels=attributed;
+	}
+	if (presentation.translucent) presentation.translucent(handle,translucent || attributes);
 	// The frame extended into the client area shows through what the program painted black there, black with no alpha to GDI, as the
 	// Windows compositor shows its frame, and the compositor draws the caption buttons over it when the client area covers the caption.
 	std::vector<uint8_t> glazed;

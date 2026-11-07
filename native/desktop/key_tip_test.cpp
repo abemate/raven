@@ -21,13 +21,15 @@ int main(int argc,char **argv)
 		raven::ModuleSet modules; auto &entry=modules.add("key-tip.exe",bytes);
 		uint64_t main_window=0,tip=0,tip_owner=0;
 		int32_t tip_x=-1,tip_y=-1;
+		std::vector<uint8_t> tip_pixels;
 		unsigned own_surfaces=0;
 		raven::DesktopPresentation presentation;
 		presentation.present=[&](uint64_t handle,std::string_view title,uint32_t,uint32_t,std::span<const uint8_t>) {
 			if (title=="main") main_window=handle;
 			else ++own_surfaces;
 		};
-		presentation.owned_popup=[&](uint64_t handle,uint64_t owner,int32_t x,int32_t y,uint32_t,uint32_t,std::span<const uint8_t>) {
+		presentation.owned_popup=[&](uint64_t handle,uint64_t owner,int32_t x,int32_t y,uint32_t,uint32_t,std::span<const uint8_t> pixels) {
+			tip_pixels.assign(pixels.begin(),pixels.end());
 			tip=handle; tip_owner=owner; tip_x=x; tip_y=y;
 		};
 		presentation.remove=[&](uint64_t) {};
@@ -39,6 +41,8 @@ int main(int argc,char **argv)
 		check(!own_surfaces,"the key tip became a host window of its own");
 		check(tip && tip_owner==main_window,"the key tip did not show on the active window");
 		check(tip_x==30 && tip_y==40,"the key tip did not show where the program placed it");
+		// The white window at 150 of 255 opacity, premultiplied.
+		check(tip_pixels.size()>=4 && tip_pixels[3]==150 && tip_pixels[0]==150 && tip_pixels[2]==150,"the layered window's opacity was not applied");
 	} catch (const std::exception &error) { std::cerr<<error.what()<<'\n'; return 1; }
 	return 0;
 }
