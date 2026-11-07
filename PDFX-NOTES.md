@@ -19,7 +19,7 @@ This branch runs **PDF-XChange Editor 11** (the portable x64 release) under Rave
 
 ## What's here
 
-There are about 75 commits on top of `main` as of `f56b75b`. Together they touch about 95 files, adding about 7,500 lines and removing about 300. One of them is a cherry-pick of PR #140 by Raymond Bennett, with his authorship kept. Most of the others are general Raven fixes that PDF-XChange happened to expose.
+There are about 75 commits on top of `main` as of [`f56b75b`](https://github.com/abemate/raven/commit/f56b75b). Together they touch about 95 files, adding about 7,500 lines and removing about 300. One of them is a cherry-pick of PR #140 by Raymond Bennett, with his authorship kept. Most of the others are general Raven fixes that PDF-XChange happened to expose.
 
 Highlights:
 
@@ -106,79 +106,79 @@ Thanks for Raven. Running an application as large as this natively on Wayland is
 
 ## Commits (oldest first)
 
-- `53374dd` fix: publish the system libraries and exports PDF-XChange Editor's core imports
-- `4287b19` feat: answer GetSystemTimeAdjustment with the default clock period
-- `7cfa4fc` feat: add GetDllDirectoryW and GetDllDirectoryA
-- `d2c85e8` feat: add mscms GetColorDirectoryW and GetColorDirectoryA
-- `56a2b56` feat: add GetCharacterPlacement, GetFontLanguageInfo and ScriptGetLogicalWidths
-- `9743ec3` feat: add OleRun to the shell component
-- `fbae34d` feat: map virtual keys through MapVirtualKeyEx
-- `a32b6f6` feat: add StrRStrIW and StrRStrIA
-- `7816aed` feat: add GetRandomRgn
-- `c5c7d08` test: drive PDF-XChange Editor headless through Raven
-- `a02512e` feat: add GetGUIThreadInfo
-- `9a53c9b` feat: add GetScaleFactorForMonitor
-- `f436954` feat: hand out whole font files and name glyphs by the face's own indices
-- `d28e511` test: open given PDFs and check drawn page text in the PDF-XChange run
-- `aab41a2` feat: trace the family a font enumeration asks for
-- `27f8513` test: keep PDF-XChange runs small and add a document with embedded fonts
-- `964d523` feat: add CryptSetProvParam
-- `0c3d053` fix: share the file's pages with every writable view of its section
-- `51a2287` test: annotate, save and open the print dialog in the PDF-XChange run
-- `2569395` chore: add a personal launcher and print helper for PDF-XChange Editor
-- `07598b8` chore: add a setup script that builds Raven and installs PDF-XChange Editor
-- `7e15285` feat: add ScrollDC
-- `c31e922` fix: let GetTempFileName make a name without a prefix
-- `adc20ad` test: run PDF-XChange on a headless screen of a given size
-- `254554e` feat: add ValidateRgn
-- `266f512` feat: resume COM class objects and count local server references
-- `6b8030b` feat: add InternetAttemptConnect
-- `b9b8f19` feat: add shlwapi string and path helpers PDF-XChange Editor imports
-- `833fe58` feat: add StrRetToBufW, OleLockRunning and OleSetContainedObject to the shell component
-- `854fa85` feat: add title bar info, process layout, animated rects and system message broadcast
-- `f8cc222` feat: add TransparentBlt, DC brush and pen colors, arc direction and the GDI batch limit
-- `478422a` chore: show which Raven build the PDF-XChange launcher runs
-- `97ae83b` feat: answer the printer calls as a Windows with no printer installed
-- `d5e2262` chore: log every PDF-XChange run, menu launches included, into the shared folder
-- `e46732f` fix: show drop-down shadows beside their list and deliver clicks to popups
-- `49bb75e` feat: drag and drop inside a program, the system image lists and PlaySound
-- `9c6993c` feat: say where a faulting address lies among the guest's mappings
-- `daa4306` fix: follow the desktop's maximizing and restoring of a window
-- `1d49fae` test: add a generator of a PDF form for the PDF-XChange checks
-- `9ab09f8` fix: send the mouse wheel to the window under the pointer
-- `d740d43` feat: show the desktop's own file dialog through the XDG portal
-- `0d79045` Printing through CUPS; path figures, mapping modes and large fills
-- `7034474` Send WM_MOVE and WM_SIZE from WM_WINDOWPOSCHANGED during SetWindowPos
-- `1dd14f2` StretchDIBits honours the DC's mapping mode and world transform
-- `9e72494` Send non-client mouse messages; drag maximized windows by the caption
-- `02cbf63` Printer contexts answer GetDeviceCaps themselves, not the display fast path
-- `3955926` PageSetupDlgW in the shell component
-- `40d7163` Wayland: keep owned windows above their owners
-- `887c803` Crash reports name the bitmap a faulting address belongs to
-- `8adea6f` Wayland: no move or resize for a frame press already let go
-- `fd32d03` RAVEN_TRACE_MSG reports each frame drag handed to the compositor
-- `ae62aae` Send a window's maximized state to the desktop only when the program changes it
-- `6438243` A window the desktop restores without a size goes back to its restored rectangle
-- `893146d` SHILCreateFromPath and SHOpenFolderAndSelectItems; reap xdg-open
-- `614b7a2` Printed text under mapping modes and world transforms; bold and italic faces
-- `8e98a01` Enumerated italic faces report lfItalic and tmItalic 255
-- `c1fef69` CheckTokenMembership answers from the token's interactive logon groups
-- `80fe3fa` The update region stays inside the client area
-- `238b9f0` Fault reports name the mapping after the address; paint trace shows the client size
-- `cd2f38a` FlsSetValue stores into the thread's mirror array without a stop
-- `c2e5ed5` Wayland frames find their changed rows by comparing, not hashing
-- `4b354ca` Files drag in from the desktop and pages drag out to it
-- `7cccfca` Maximized windows do not size from their borders
-- `eb72e1b` Host input waits for the thread of the window it is for
-- `61312eb` Owned dialogs keep the keyboard and hand it back when they close
-- `ce6ccf8` Text measuring is served without stopping the guest
-- `7535965` Ctrl+Alt keys come as plain key messages, as on Windows
-- `7bd3acc` Left and right modifier keys keep their own state
-- `0188d08` RAVEN_TRACE_DRAG follows title-bar drags; caption SC_MOVE drags maximized windows
-- `60d3d7c` Windows beneath a child that leaves repaint the uncovered area
-- `03210ef` A maximized window dragged by its caption comes back at a normal size
-- `82e4be4` Alt key tips show beside their ribbon buttons
-- `42c301e` Layered windows show the opacity and color key SetLayeredWindowAttributes gives
-- `36bde07` docs: list the drag and drop and page setup shell files
-- `f9d2d31` docs: add the AI caveat and where the branch stands against CONTRIBUTING.md
-- `b7495ce` docs: replace the README with a short pointer to the PDF-XChange changes
+- [`53374dd`](https://github.com/abemate/raven/commit/53374dd) fix: publish the system libraries and exports PDF-XChange Editor's core imports
+- [`4287b19`](https://github.com/abemate/raven/commit/4287b19) feat: answer GetSystemTimeAdjustment with the default clock period
+- [`7cfa4fc`](https://github.com/abemate/raven/commit/7cfa4fc) feat: add GetDllDirectoryW and GetDllDirectoryA
+- [`d2c85e8`](https://github.com/abemate/raven/commit/d2c85e8) feat: add mscms GetColorDirectoryW and GetColorDirectoryA
+- [`56a2b56`](https://github.com/abemate/raven/commit/56a2b56) feat: add GetCharacterPlacement, GetFontLanguageInfo and ScriptGetLogicalWidths
+- [`9743ec3`](https://github.com/abemate/raven/commit/9743ec3) feat: add OleRun to the shell component
+- [`fbae34d`](https://github.com/abemate/raven/commit/fbae34d) feat: map virtual keys through MapVirtualKeyEx
+- [`a32b6f6`](https://github.com/abemate/raven/commit/a32b6f6) feat: add StrRStrIW and StrRStrIA
+- [`7816aed`](https://github.com/abemate/raven/commit/7816aed) feat: add GetRandomRgn
+- [`c5c7d08`](https://github.com/abemate/raven/commit/c5c7d08) test: drive PDF-XChange Editor headless through Raven
+- [`a02512e`](https://github.com/abemate/raven/commit/a02512e) feat: add GetGUIThreadInfo
+- [`9a53c9b`](https://github.com/abemate/raven/commit/9a53c9b) feat: add GetScaleFactorForMonitor
+- [`f436954`](https://github.com/abemate/raven/commit/f436954) feat: hand out whole font files and name glyphs by the face's own indices
+- [`d28e511`](https://github.com/abemate/raven/commit/d28e511) test: open given PDFs and check drawn page text in the PDF-XChange run
+- [`aab41a2`](https://github.com/abemate/raven/commit/aab41a2) feat: trace the family a font enumeration asks for
+- [`27f8513`](https://github.com/abemate/raven/commit/27f8513) test: keep PDF-XChange runs small and add a document with embedded fonts
+- [`964d523`](https://github.com/abemate/raven/commit/964d523) feat: add CryptSetProvParam
+- [`0c3d053`](https://github.com/abemate/raven/commit/0c3d053) fix: share the file's pages with every writable view of its section
+- [`51a2287`](https://github.com/abemate/raven/commit/51a2287) test: annotate, save and open the print dialog in the PDF-XChange run
+- [`2569395`](https://github.com/abemate/raven/commit/2569395) chore: add a personal launcher and print helper for PDF-XChange Editor
+- [`07598b8`](https://github.com/abemate/raven/commit/07598b8) chore: add a setup script that builds Raven and installs PDF-XChange Editor
+- [`7e15285`](https://github.com/abemate/raven/commit/7e15285) feat: add ScrollDC
+- [`c31e922`](https://github.com/abemate/raven/commit/c31e922) fix: let GetTempFileName make a name without a prefix
+- [`adc20ad`](https://github.com/abemate/raven/commit/adc20ad) test: run PDF-XChange on a headless screen of a given size
+- [`254554e`](https://github.com/abemate/raven/commit/254554e) feat: add ValidateRgn
+- [`266f512`](https://github.com/abemate/raven/commit/266f512) feat: resume COM class objects and count local server references
+- [`6b8030b`](https://github.com/abemate/raven/commit/6b8030b) feat: add InternetAttemptConnect
+- [`b9b8f19`](https://github.com/abemate/raven/commit/b9b8f19) feat: add shlwapi string and path helpers PDF-XChange Editor imports
+- [`833fe58`](https://github.com/abemate/raven/commit/833fe58) feat: add StrRetToBufW, OleLockRunning and OleSetContainedObject to the shell component
+- [`854fa85`](https://github.com/abemate/raven/commit/854fa85) feat: add title bar info, process layout, animated rects and system message broadcast
+- [`f8cc222`](https://github.com/abemate/raven/commit/f8cc222) feat: add TransparentBlt, DC brush and pen colors, arc direction and the GDI batch limit
+- [`478422a`](https://github.com/abemate/raven/commit/478422a) chore: show which Raven build the PDF-XChange launcher runs
+- [`97ae83b`](https://github.com/abemate/raven/commit/97ae83b) feat: answer the printer calls as a Windows with no printer installed
+- [`d5e2262`](https://github.com/abemate/raven/commit/d5e2262) chore: log every PDF-XChange run, menu launches included, into the shared folder
+- [`e46732f`](https://github.com/abemate/raven/commit/e46732f) fix: show drop-down shadows beside their list and deliver clicks to popups
+- [`49bb75e`](https://github.com/abemate/raven/commit/49bb75e) feat: drag and drop inside a program, the system image lists and PlaySound
+- [`9c6993c`](https://github.com/abemate/raven/commit/9c6993c) feat: say where a faulting address lies among the guest's mappings
+- [`daa4306`](https://github.com/abemate/raven/commit/daa4306) fix: follow the desktop's maximizing and restoring of a window
+- [`1d49fae`](https://github.com/abemate/raven/commit/1d49fae) test: add a generator of a PDF form for the PDF-XChange checks
+- [`9ab09f8`](https://github.com/abemate/raven/commit/9ab09f8) fix: send the mouse wheel to the window under the pointer
+- [`d740d43`](https://github.com/abemate/raven/commit/d740d43) feat: show the desktop's own file dialog through the XDG portal
+- [`0d79045`](https://github.com/abemate/raven/commit/0d79045) Printing through CUPS; path figures, mapping modes and large fills
+- [`7034474`](https://github.com/abemate/raven/commit/7034474) Send WM_MOVE and WM_SIZE from WM_WINDOWPOSCHANGED during SetWindowPos
+- [`1dd14f2`](https://github.com/abemate/raven/commit/1dd14f2) StretchDIBits honours the DC's mapping mode and world transform
+- [`9e72494`](https://github.com/abemate/raven/commit/9e72494) Send non-client mouse messages; drag maximized windows by the caption
+- [`02cbf63`](https://github.com/abemate/raven/commit/02cbf63) Printer contexts answer GetDeviceCaps themselves, not the display fast path
+- [`3955926`](https://github.com/abemate/raven/commit/3955926) PageSetupDlgW in the shell component
+- [`40d7163`](https://github.com/abemate/raven/commit/40d7163) Wayland: keep owned windows above their owners
+- [`887c803`](https://github.com/abemate/raven/commit/887c803) Crash reports name the bitmap a faulting address belongs to
+- [`8adea6f`](https://github.com/abemate/raven/commit/8adea6f) Wayland: no move or resize for a frame press already let go
+- [`fd32d03`](https://github.com/abemate/raven/commit/fd32d03) RAVEN_TRACE_MSG reports each frame drag handed to the compositor
+- [`ae62aae`](https://github.com/abemate/raven/commit/ae62aae) Send a window's maximized state to the desktop only when the program changes it
+- [`6438243`](https://github.com/abemate/raven/commit/6438243) A window the desktop restores without a size goes back to its restored rectangle
+- [`893146d`](https://github.com/abemate/raven/commit/893146d) SHILCreateFromPath and SHOpenFolderAndSelectItems; reap xdg-open
+- [`614b7a2`](https://github.com/abemate/raven/commit/614b7a2) Printed text under mapping modes and world transforms; bold and italic faces
+- [`8e98a01`](https://github.com/abemate/raven/commit/8e98a01) Enumerated italic faces report lfItalic and tmItalic 255
+- [`c1fef69`](https://github.com/abemate/raven/commit/c1fef69) CheckTokenMembership answers from the token's interactive logon groups
+- [`80fe3fa`](https://github.com/abemate/raven/commit/80fe3fa) The update region stays inside the client area
+- [`238b9f0`](https://github.com/abemate/raven/commit/238b9f0) Fault reports name the mapping after the address; paint trace shows the client size
+- [`cd2f38a`](https://github.com/abemate/raven/commit/cd2f38a) FlsSetValue stores into the thread's mirror array without a stop
+- [`c2e5ed5`](https://github.com/abemate/raven/commit/c2e5ed5) Wayland frames find their changed rows by comparing, not hashing
+- [`4b354ca`](https://github.com/abemate/raven/commit/4b354ca) Files drag in from the desktop and pages drag out to it
+- [`7cccfca`](https://github.com/abemate/raven/commit/7cccfca) Maximized windows do not size from their borders
+- [`eb72e1b`](https://github.com/abemate/raven/commit/eb72e1b) Host input waits for the thread of the window it is for
+- [`61312eb`](https://github.com/abemate/raven/commit/61312eb) Owned dialogs keep the keyboard and hand it back when they close
+- [`ce6ccf8`](https://github.com/abemate/raven/commit/ce6ccf8) Text measuring is served without stopping the guest
+- [`7535965`](https://github.com/abemate/raven/commit/7535965) Ctrl+Alt keys come as plain key messages, as on Windows
+- [`7bd3acc`](https://github.com/abemate/raven/commit/7bd3acc) Left and right modifier keys keep their own state
+- [`0188d08`](https://github.com/abemate/raven/commit/0188d08) RAVEN_TRACE_DRAG follows title-bar drags; caption SC_MOVE drags maximized windows
+- [`60d3d7c`](https://github.com/abemate/raven/commit/60d3d7c) Windows beneath a child that leaves repaint the uncovered area
+- [`03210ef`](https://github.com/abemate/raven/commit/03210ef) A maximized window dragged by its caption comes back at a normal size
+- [`82e4be4`](https://github.com/abemate/raven/commit/82e4be4) Alt key tips show beside their ribbon buttons
+- [`42c301e`](https://github.com/abemate/raven/commit/42c301e) Layered windows show the opacity and color key SetLayeredWindowAttributes gives
+- [`36bde07`](https://github.com/abemate/raven/commit/36bde07) docs: list the drag and drop and page setup shell files
+- [`f9d2d31`](https://github.com/abemate/raven/commit/f9d2d31) docs: add the AI caveat and where the branch stands against CONTRIBUTING.md
+- [`b7495ce`](https://github.com/abemate/raven/commit/b7495ce) docs: replace the README with a short pointer to the PDF-XChange changes
