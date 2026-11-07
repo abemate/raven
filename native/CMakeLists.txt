@@ -1360,6 +1360,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(key_chord_test key_chord_fixture raven-bootstrap)
             add_test(NAME native_key_chord COMMAND key_chord_test $<TARGET_FILE:raven-bootstrap> ${KEY_CHORD_FIXTURE})
             set_tests_properties(native_key_chord PROPERTIES TIMEOUT 30)
+            set(DRAG_RESTORE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/drag-restore.exe)
+            add_custom_command(OUTPUT ${DRAG_RESTORE_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${DRAG_RESTORE_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/drag_restore_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/drag_restore_client.c VERBATIM)
+            add_custom_target(drag_restore_fixture ALL DEPENDS ${DRAG_RESTORE_FIXTURE})
+            add_executable(drag_restore_test desktop/drag_restore_test.cpp)
+            target_link_libraries(drag_restore_test PRIVATE raven_cpu)
+            add_dependencies(drag_restore_test drag_restore_fixture raven-bootstrap)
+            add_test(NAME native_drag_restore COMMAND drag_restore_test $<TARGET_FILE:raven-bootstrap> ${DRAG_RESTORE_FIXTURE})
+            set_tests_properties(native_drag_restore PROPERTIES TIMEOUT 30)
         endif()
         set(INITIAL_MESSAGE_FIXTURES ${CMAKE_CURRENT_BINARY_DIR}/initial-message-fixtures)
         add_custom_command(OUTPUT ${INITIAL_MESSAGE_FIXTURES}/client.exe ${INITIAL_MESSAGE_FIXTURES}/exit.exe

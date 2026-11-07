@@ -1280,7 +1280,17 @@ void NativeWindows::receive(const DesktopEvent &event)
 			window->style&=~maximized;
 			// Restored without a size (KWin does this when a maximized window is dragged by its caption): the window goes back to the
 			// rectangle it had before it was maximized, as Windows restores it, or the desktop moves a window that still fills the screen.
-			const auto restore=window->restore;
+			auto restore=window->restore;
+			// A window without a usable normal size (none, or one as large as the maximized window: a program that saved its size
+			// while maximized) takes two thirds of the maximized size, so the drag does not leave a window that still fills the screen.
+			const int32_t full_width=window->outer.right-window->outer.left,full_height=window->outer.bottom-window->outer.top;
+			if (!event.y && (restore.right-restore.left<64 || restore.bottom-restore.top<64 ||
+				(restore.right-restore.left>=full_width && restore.bottom-restore.top>=full_height))) {
+				const int32_t width=std::max<int32_t>(320,(window->outer.right-window->outer.left)*2/3),
+					height=std::max<int32_t>(240,(window->outer.bottom-window->outer.top)*2/3);
+				restore={window->outer.left,window->outer.top,window->outer.left+width,window->outer.top+height};
+				window->restore=restore;
+			}
 			if (!event.y && restore.right>restore.left && restore.bottom>restore.top &&
 				(restore.right-restore.left!=window->outer.right-window->outer.left || restore.bottom-restore.top!=window->outer.bottom-window->outer.top)) {
 				const DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+(restore.right-restore.left),window->outer.top+(restore.bottom-restore.top)};
@@ -2177,6 +2187,9 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 	record.instance=args[10]; record.style=effective_style | (child ? 0U : 0x04000000U);record.ex_style=ex_style;
 	record.parent=child ? args[8] : 0;record.child_id=child ? args[9] : 0;record.client_ready=false;
 	record.owner=child ? 0 : owner_handle;
+	// A window created maximized restores to the rectangle it was created with, as on Windows (PDF-XChange starts this way); without
+	// it a desktop that restores the window on a caption drag left one that still filled the screen.
+	if (!child && !message_only && (effective_style & 0x01000000U)) record.restore=record.outer;
 	if (!child) record.menu=args[9];
 	// A window created without a menu takes the default menu of its class.
 	if (!child && !args[9] && definition->menu_id) {

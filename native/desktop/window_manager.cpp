@@ -900,13 +900,27 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 		try {
 			const DesktopRect normal{int32_t(fields[7]), int32_t(fields[8]), int32_t(fields[9]), int32_t(fields[10])};
-			objects.window(call[0])->restore = normal;
-			// The window becomes visible before it is sized, so its size notifications reach a window that is already shown.
-			if (fields[2] != 0)
-				show_window(call[0], fields[2]);
-			place_window(call[0], normal, 0, 0x4 | swp_noactivate);
-			if (fields[2] == 0)
-				show_window(call[0], 0);
+			const bool maximize = fields[2] == 3;
+			// A window shown maximized keeps the normal rectangle to restore to and fills the work area: it takes the normal rectangle
+			// first, and maximizing remembers it, as Windows does (PDF-XChange starts maximized this way). Overwriting the rectangle
+			// afterwards left a maximized window sized to it, and one that had nothing to restore to when the desktop restored it.
+			if (maximize) {
+				if (window->style & ws_maximize)
+					objects.window(call[0])->restore = normal;
+				else
+					place_window(call[0], normal, 0, 0x4 | swp_noactivate);
+				show_window(call[0], 3);
+				if (auto *placed = objects.window(call[0]))
+					placed->restore = normal;
+			} else {
+				objects.window(call[0])->restore = normal;
+				// The window becomes visible before it is sized, so its size notifications reach a window that is already shown.
+				if (fields[2] != 0)
+					show_window(call[0], fields[2]);
+				place_window(call[0], normal, 0, 0x4 | swp_noactivate);
+				if (fields[2] == 0)
+					show_window(call[0], 0);
+			}
 			call.ret(1);
 		} catch (const uint32_t &error) {
 			call.fail(error);
