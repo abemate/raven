@@ -1693,17 +1693,20 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		std::u16string text(size_t(count), u'\0');
 		std::memcpy(text.data(), bytes.data(), bytes.size());
 		const auto advances = glyph_advances(*font, text);
+		// The arrays go over in one write each: a store per glyph costs a system call each, and lists lay out thousands of strings.
 		int64_t total = 0;
+		std::vector<uint8_t> placed(size_t(count) * 4);
 		for (int32_t index = 0; index < count; ++index) {
-			call.store<int32_t>(call[6] + uint64_t(index) * 4, advances[size_t(index)]);
-			total += advances[size_t(index)];
+			const int32_t advance = advances[size_t(index)];
+			std::memcpy(placed.data() + size_t(index) * 4, &advance, 4);
+			total += advance;
 		}
+		call.write(call[6], placed);
 		if (call[7])
 			call.write(call[7], std::vector<uint8_t>(size_t(count) * 8, 0));
 		if (call[8]) {
-			call.store<int32_t>(call[8], 0);
-			call.store<uint32_t>(call[8] + 4, uint32_t(total));
-			call.store<int32_t>(call[8] + 8, 0);
+			const uint32_t abc[3]{0, uint32_t(total), 0};
+			call.write(call[8], std::vector<uint8_t>(reinterpret_cast<const uint8_t *>(abc), reinterpret_cast<const uint8_t *>(abc) + 12));
 		}
 		call.ret(0);
 	});
@@ -1716,10 +1719,10 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			return call.ret(uint32_t(0x80070057));
 		std::vector<int32_t> advance(size_t(glyphs), 0);
 		std::vector<uint16_t> cluster(size_t(characters), 0);
-		for (int32_t index = 0; index < glyphs; ++index)
-			advance[size_t(index)] = call.load<int32_t>(call[3] + uint64_t(index) * 4);
-		for (int32_t index = 0; index < characters; ++index)
-			cluster[size_t(index)] = call.load<uint16_t>(call[4] + uint64_t(index) * 2);
+		const auto advance_bytes = call.read(call[3], size_t(glyphs) * 4), cluster_bytes = call.read(call[4], size_t(characters) * 2);
+		std::memcpy(advance.data(), advance_bytes.data(), advance_bytes.size());
+		std::memcpy(cluster.data(), cluster_bytes.data(), cluster_bytes.size());
+		std::vector<uint8_t> widths(size_t(characters) * 4);
 		for (int32_t first = 0; first < characters;) {
 			int32_t last = first + 1;
 			while (last < characters && cluster[size_t(last)] == cluster[size_t(first)])
@@ -1730,10 +1733,13 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			for (int32_t glyph = start; glyph < stop; ++glyph)
 				width += advance[size_t(glyph)];
 			const int32_t count = last - first, share = width / count;
-			for (int32_t index = first; index < last; ++index)
-				call.store<int32_t>(call[6] + uint64_t(index) * 4, index + 1 == last ? width - share * (count - 1) : share);
+			for (int32_t index = first; index < last; ++index) {
+				const int32_t value = index + 1 == last ? width - share * (count - 1) : share;
+				std::memcpy(widths.data() + size_t(index) * 4, &value, 4);
+			}
 			first = last;
 		}
+		call.write(call[6], widths);
 		call.ret(0);
 	});
 	// ScriptTextOut(dc, cache, x, y, options, rect, analysis, reserved, reserved, glyphs, count, advances, justified advances, offsets).
@@ -1804,12 +1810,14 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.ret(0x80070057U);
 			return;
 		}
-		for (int32_t index = 0; index < runs; ++index) {
-			if (call[2])
-				call.store<int32_t>(call[2] + uint64_t(index) * 4, index);
-			if (call[3])
-				call.store<int32_t>(call[3] + uint64_t(index) * 4, index);
-		}
+		// Left-to-right runs keep their order both ways; the maps go over in one write each.
+		std::vector<uint8_t> order(size_t(runs) * 4);
+		for (int32_t index = 0; index < runs; ++index)
+			std::memcpy(order.data() + size_t(index) * 4, &index, 4);
+		if (runs && call[2])
+			call.write(call[2], order);
+		if (runs && call[3])
+			call.write(call[3], order);
 		call.ret(0);
 	});
 	registry.add("ScriptFreeCache", 1, [](ApiCall &call) {
@@ -1870,11 +1878,8 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.ret(0x80070057U);
 			return;
 		}
-		call.store<uint16_t>(call[2] + 4, 0x20);
-		call.store<uint16_t>(call[2] + 6, 0);
-		call.store<uint16_t>(call[2] + 8, 0);
-		call.store<uint16_t>(call[2] + 10, 0xffff);
-		call.store<int32_t>(call[2] + 12, 0);
+		// wgBlank, wgDefault, wgInvalid, wgKashida and iKashidaWidth, in one write.
+		call.write(call[2] + 4, std::vector<uint8_t>{0x20, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0});
 		call.ret(0);
 	});
 	// No national digit shapes: the control and state a default run starts from.

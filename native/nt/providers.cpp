@@ -168,7 +168,16 @@ static bool served_api(std::string_view module, std::string_view name)
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "QueryUnbiasedInterruptTime" ||
 			name == "QueryUnbiasedInterruptTimePrecise" || name == "WakeConditionVariable" ||
 			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore" || name == "CreateSemaphoreExW" ||
-			name == "WaitForSingleObject" || name == "WaitForSingleObjectEx" || name == "SetEvent" || name == "ResetEvent" || name == "CloseHandle";
+			name == "WaitForSingleObject" || name == "WaitForSingleObjectEx" || name == "SetEvent" || name == "ResetEvent" || name == "CloseHandle" ||
+			// Case mapping only reads and writes strings; a search over a list maps every entry on each key.
+			name == "LCMapStringW" || name == "LCMapStringEx";
+	// Measuring text reads the DC and the font and writes the results: PDF-XChange lays out every command of its Customize list with
+	// Uniscribe on each key typed into the list's search, tens of thousands of calls that a stop each made take seconds.
+	if (module == "usp10.dll")
+		return name == "ScriptItemize" || name == "ScriptBreak" || name == "ScriptShape" || name == "ScriptPlace" ||
+			name == "ScriptGetFontProperties" || name == "ScriptGetLogicalWidths" || name == "ScriptLayout" || name == "ScriptCacheGetHeight";
+	if (module == "gdi32.dll")
+		return name == "SelectObject" || name == "GetCharacterPlacementW";
 	// Reading a socket's recorded events polls the host sockets and never blocks.
 	if (module == "ws2_32.dll")
 		return name == "WSAEnumNetworkEvents";
@@ -2996,7 +3005,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		windows.screen_dc_use(found->second);
 		const WindowCallScope window_scope(windows);
 		const auto profile_start = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-		const bool dispatched = api_registry.dispatch(process, environment, found->second)
+		const bool dispatched = api_registry.dispatch(process, environment, found->second) ||
+			desktop_api.dispatch(process, environment, found->second) || desktop.dispatch(found->second)
 #ifdef RAVEN_VULKAN
 			|| vulkan.dispatch(found->second)
 #endif

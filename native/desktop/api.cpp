@@ -539,6 +539,11 @@ bool NativeDesktop::dispatch(std::string_view name)
 		result = delete_dc(process.api_arguments(1)[0]);
 	} else if (name == "SelectObject") {
 		const auto args = process.api_arguments(2);
+		// A font, pen or brush is selected without the guest stopping; a bitmap can map or release guest memory, which needs the stop.
+		if (process.serving() && objects.bitmap(args[1])) {
+			process.decline_served();
+			return true;
+		}
 		result = select(args[0],args[1]);
 	} else if (name == "CreateCompatibleBitmap") {
 		result = compatible_bitmap(process.api_arguments(3));
