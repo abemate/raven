@@ -487,6 +487,9 @@ private:
 	uint64_t window_at(int32_t x,int32_t y);
 	bool enable_window(uint64_t window,bool enable);
 	void invalidate_tree(uint64_t window,bool erase);
+	// A child window hidden, destroyed or moved away uncovers part of its parent (an area in screen coordinates): the parent and the
+	// visible windows beneath it (siblings and their children, except the one leaving) repaint it, as on Windows.
+	bool expose(uint64_t parent, DesktopRect area, uint64_t except);
 	// Window messages registered by name (RegisterWindowMessage); ids start at 0xc000 like atoms.
 	std::map<std::u16string,uint32_t> registered_messages;
 	int32_t cursor_count=0;

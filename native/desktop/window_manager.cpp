@@ -83,6 +83,27 @@ void NativeWindows::invalidate_tree(uint64_t handle, bool erase)
 		invalidate_tree(child, erase);
 }
 
+bool NativeWindows::expose(uint64_t parent, DesktopRect area, uint64_t except)
+{
+	const auto *window = std::as_const(objects).window(parent);
+	if (!window || window->destroying)
+		return true;
+	const auto local = [](int64_t value) { return int32_t(std::clamp(value, int64_t(INT32_MIN), int64_t(INT32_MAX))); };
+	if (!objects.invalidate(parent, {local(int64_t(area.left) - window->x), local(int64_t(area.top) - window->y), local(int64_t(area.right) - window->x),
+			local(int64_t(area.bottom) - window->y)}, true))
+		return false;
+	for (const auto child : objects.child_windows(parent)) {
+		const auto *record = std::as_const(objects).window(child);
+		if (child == except || !record || record->destroying || !record->visible || record->outer.right <= area.left ||
+			record->outer.left >= area.right || record->outer.bottom <= area.top || record->outer.top >= area.bottom)
+			continue;
+		if (!expose(child, {std::max(area.left, record->outer.left), std::max(area.top, record->outer.top), std::min(area.right, record->outer.right),
+				std::min(area.bottom, record->outer.bottom)}, except))
+			return false;
+	}
+	return true;
+}
+
 bool NativeWindows::enable_window(uint64_t handle, bool enable)
 {
 	auto *window = objects.window(handle);
@@ -177,11 +198,8 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	window = objects.window(handle);
 	if (!window)
 		throw uint32_t(1400);
-	if (!window->visible && previous && window->parent) {
-		const auto *parent = std::as_const(objects).window(window->parent);
-		objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
-			window->outer.bottom - parent->y}, true);
-	}
+	if (!window->visible && previous && window->parent)
+		expose(window->parent, window->outer, handle);
 	send(handle, 0x18, window->visible, 0);
 	// The size and position messages an overlapped window did not get while it was created come with its first showing.
 	window = objects.window(handle);
@@ -296,10 +314,8 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		positioning = true;
 		struct Restore { bool &flag; bool value; ~Restore() { flag = value; } } restore{positioning, was_positioning};
 		const auto old_client_x = window->x, old_client_y = window->y;
-		if (window->parent && was_visible) {
-			const auto *parent = std::as_const(objects).window(window->parent);
-			objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
-		}
+		if (window->parent && was_visible)
+			expose(window->parent, old, handle);
 		if (window->parent || !resized) {
 			if (shifted)
 				shift_window(handle, target.left - old.left, target.top - old.top);
