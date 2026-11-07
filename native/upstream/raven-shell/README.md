@@ -10,6 +10,9 @@ public Windows headers. It supplies what the system libraries of the guest canno
   template assembled in memory and shown by the dialog manager of the user32 component;
 - shell items (`IShellItem`, `IShellItemArray`) and `SHCreateItemFromParsingName`;
 - the class registry behind `CoCreateInstance`, which creates the file dialog classes.
+- OLE drag and drop (`dragdrop.c`): `RegisterDragDrop`, `RevokeDragDrop` and `DoDragDrop` within the process, files dropped from the
+  desktop (`CF_HDROP` through a per-thread broker window, `DragQueryFileW`/`A`, `DragQueryPoint`, `DragFinish`) and files or
+  virtual files dragged out to it.
 - `ExtractIconExW` and `ExtractIconW`: the icons of a program, a library or an .ico file, at the system's large and small sizes.
 - UI Automation's reserved "not supported" and "mixed attribute" values, one object each for the process.
 - the task allocator, through `CoGetMalloc` and the shell's `SHGetMalloc`.
