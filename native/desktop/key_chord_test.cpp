@@ -71,6 +71,7 @@ int main(int argc,char **argv)
 		check(result.stop==raven::NativeStop::returned,"key chord fixture did not return");
 		check(result.value!=10,"Ctrl+Alt+7 came as a system key");
 		check(result.value!=12,"Ctrl+Alt+7 typed a character");
+		check(result.value!=16,"left and right Ctrl/Alt states differ from Windows (right Alt seen as down)");
 		check(!result.value,"key chord workflow failed");
 	} catch (const std::exception &error) { std::cerr<<error.what()<<'\n'; return 1; }
 	return 0;

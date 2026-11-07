@@ -29,6 +29,22 @@ namespace raven {
 // Windows makes a key a system key (WM_SYSKEYDOWN/UP) when Alt is held without Ctrl, and F10 always: with Ctrl and Alt both held (as
 // AltGr holds them) keys come as WM_KEYDOWN, which is what accelerator tables such as a program's Ctrl+Alt+7 shortcut look for. Alt
 // going up is a system key whenever it went down as one or Ctrl is up.
+// The left or right key behind a generic modifier (VK_LSHIFT..VK_RMENU), told apart as Windows does by the right Shift's scan code and
+// the extended flag of right Ctrl and right Alt (AltGr); 0 for other keys. Programs ask for the sides: PDF-XChange takes a right Alt
+// as AltGr typing a character and then skips its Ctrl+Alt shortcuts.
+static uint32_t sided_key(uint32_t code,uint32_t scan,bool extended)
+{
+	if (code==0x10) return scan==54 ? 0xa1 : 0xa0;
+	if (code==0x11) return extended ? 0xa3 : 0xa2;
+	if (code==0x12) return extended ? 0xa5 : 0xa4;
+	return 0;
+}
+
+static void set_key(std::array<uint8_t,256> &state,uint32_t code,bool down)
+{
+	state[code&255]=down ? (state[code&255] | 0x80) : (state[code&255] & 0x7f);
+}
+
 static bool system_key(uint32_t code,bool pressed,bool alt_down,bool control_down)
 {
 	if (code==0x79) return true;
@@ -1129,6 +1145,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 				if (active==down) continue;
 				const bool system=system_key(code,active,(vk_async[0x12] & 0x80)!=0,(vk_async[0x11] & 0x80)!=0);
 				vk_async[code]=active ? (vk_async[code] | 0x80) : (vk_async[code] & 0x7f);
+				set_key(vk_async,sided_key(code,scans[index],false),active);
 				queue({focus,code,1 | (uint64_t(scans[index])<<16) | (uint64_t(!active)<<30) | (uint64_t(!active)<<31) | (system && code!=0x79 ? uint64_t(1)<<29 : 0),
 					active ? (system ? 0x104U : 0x100U) : (system ? 0x105U : 0x101U),message_time(),cursor_x,cursor_y,0},1);
 			}
@@ -1239,6 +1256,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 		const bool chord=(vk_async[0x11] & 0x80) && (vk_async[0x12] & 0x80);
 		queue({focus,key.code,flags,system ? (pressed ? 0x104U : 0x105U) : (pressed ? 0x100U : 0x101U),message_time(),cursor_x,cursor_y,pressed && !chord ? key.character : 0},1);
 		vk_async[key.code&255]=pressed ? (vk_async[key.code&255] | 0x80) : (vk_async[key.code&255] & 0x7f);
+		if (const auto side=sided_key(key.code,key.scan,key.extended)) set_key(vk_async,side,pressed);
 		if (pressed && !previous && (key.code==0x14 || key.code==0x90 || key.code==0x91)) vk_async[key.code]^=1;
 		return;
 	}
@@ -1545,6 +1563,7 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 					const bool down=value.message==0x100 || value.message==0x104;
 					const bool repeat=(value.lparam>>30) & 1;
 					vk_state[code]=down ? (vk_state[code] | 0x80) : (vk_state[code] & 0x7f);
+					if (const auto side=sided_key(code,uint32_t(value.lparam>>16) & 0xff,(value.lparam>>24) & 1)) set_key(vk_state,side,down);
 					if (down && !repeat && (code==0x14 || code==0x90 || code==0x91)) vk_state[code]^=1;
 				}
 			}
