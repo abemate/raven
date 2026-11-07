@@ -1415,7 +1415,17 @@ static bool trace_buttons_enabled()
 
 uint64_t NativeWindows::host_owner(const DesktopWindow &window) const
 {
-	return window.owner ? objects.window_root(window.owner) : window.shown_on ? objects.window_root(window.shown_on) : 0;
+	if (window.owner) return objects.window_root(window.owner);
+	if (window.shown_on) return objects.window_root(window.shown_on);
+	// An unowned tool window popup without a caption (PXC's Alt key tips, one per ribbon button) is placed by the program in screen
+	// coordinates; a host window of its own would be placed by the compositor (KWin cascades them into a diagonal line). It shows on
+	// the active window instead, where the program put it.
+	if (!window.parent && active && (window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U && (window.ex_style & 0x80U)) {
+		const auto root=objects.window_root(active);
+		const auto *record=root ? std::as_const(objects).window(root) : nullptr;
+		if (record && record!=&window && !record->parent) return root;
+	}
+	return 0;
 }
 
 bool NativeWindows::shown_on_owner(const DesktopWindow &window) const
