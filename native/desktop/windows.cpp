@@ -26,6 +26,16 @@
 
 namespace raven {
 
+// Windows makes a key a system key (WM_SYSKEYDOWN/UP) when Alt is held without Ctrl, and F10 always: with Ctrl and Alt both held (as
+// AltGr holds them) keys come as WM_KEYDOWN, which is what accelerator tables such as a program's Ctrl+Alt+7 shortcut look for. Alt
+// going up is a system key whenever it went down as one or Ctrl is up.
+static bool system_key(uint32_t code,bool pressed,bool alt_down,bool control_down)
+{
+	if (code==0x79) return true;
+	if (pressed) return (alt_down || code==0x12) && !(control_down || code==0x11);
+	return alt_down && (code==0x12 || !control_down);
+}
+
 static uint64_t read(std::span<const uint8_t> bytes,size_t at,size_t width);
 
 NativeWindows::NativeWindows(NativeProcess &process, NativeEnvironment &environment, DesktopObjects &objects)
@@ -1117,9 +1127,9 @@ void NativeWindows::receive(const DesktopEvent &event)
 				const uint32_t code=0x10+index;
 				const bool active=keyboard_map.modifier_active(code),down=(vk_async[code] & 0x80)!=0;
 				if (active==down) continue;
-				const bool system=code==0x12 || (vk_async[0x12] & 0x80);
+				const bool system=system_key(code,active,(vk_async[0x12] & 0x80)!=0,(vk_async[0x11] & 0x80)!=0);
 				vk_async[code]=active ? (vk_async[code] | 0x80) : (vk_async[code] & 0x7f);
-				queue({focus,code,1 | (uint64_t(scans[index])<<16) | (uint64_t(!active)<<30) | (uint64_t(!active)<<31) | (code==0x12 ? uint64_t(1)<<29 : 0),
+				queue({focus,code,1 | (uint64_t(scans[index])<<16) | (uint64_t(!active)<<30) | (uint64_t(!active)<<31) | (system && code!=0x79 ? uint64_t(1)<<29 : 0),
 					active ? (system ? 0x104U : 0x100U) : (system ? 0x105U : 0x101U),message_time(),cursor_x,cursor_y,0},1);
 			}
 		}
@@ -1221,10 +1231,13 @@ void NativeWindows::receive(const DesktopEvent &event)
 		const bool modifier=key.code>=0x10 && key.code<=0x12;
 		// A modifier already reported through the keymap state is not announced twice.
 		if (modifier && ((vk_async[key.code] & 0x80)!=0)==pressed) return;
-		const bool system=key.code==0x12 || (vk_async[0x12] & 0x80);
-		const uint64_t flags=1 | (uint64_t(key.scan)<<16) | (uint64_t(key.extended)<<24) | (system && key.code!=0x12 ? uint64_t(1)<<29 : 0) |
-			(key.code==0x12 ? uint64_t(1)<<29 : 0) | (uint64_t(previous)<<30) | (uint64_t(!pressed)<<31);
-		queue({focus,key.code,flags,system ? (pressed ? 0x104U : 0x105U) : (pressed ? 0x100U : 0x101U),message_time(),cursor_x,cursor_y,pressed ? key.character : 0},1);
+		const bool system=system_key(key.code,pressed,(vk_async[0x12] & 0x80)!=0,(vk_async[0x11] & 0x80)!=0);
+		const uint64_t flags=1 | (uint64_t(key.scan)<<16) | (uint64_t(key.extended)<<24) | (system && key.code!=0x79 ? uint64_t(1)<<29 : 0) |
+			(uint64_t(previous)<<30) | (uint64_t(!pressed)<<31);
+		// Ctrl and Alt together type nothing on a layout without AltGr characters (a compositor's AltGr is its own Level3 modifier, so
+		// a character it gives is kept by xkb under that modifier, not under Ctrl+Alt).
+		const bool chord=(vk_async[0x11] & 0x80) && (vk_async[0x12] & 0x80);
+		queue({focus,key.code,flags,system ? (pressed ? 0x104U : 0x105U) : (pressed ? 0x100U : 0x101U),message_time(),cursor_x,cursor_y,pressed && !chord ? key.character : 0},1);
 		vk_async[key.code&255]=pressed ? (vk_async[key.code&255] | 0x80) : (vk_async[key.code&255] & 0x7f);
 		if (pressed && !previous && (key.code==0x14 || key.code==0x90 || key.code==0x91)) vk_async[key.code]^=1;
 		return;

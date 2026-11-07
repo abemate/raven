@@ -1339,6 +1339,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(thread_input_test thread_input_fixture raven-bootstrap)
             add_test(NAME native_thread_input COMMAND thread_input_test $<TARGET_FILE:raven-bootstrap> ${THREAD_INPUT_FIXTURE})
             set_tests_properties(native_thread_input PROPERTIES TIMEOUT 30)
+            set(KEY_CHORD_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/key-chord.exe)
+            add_custom_command(OUTPUT ${KEY_CHORD_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${KEY_CHORD_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/key_chord_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/key_chord_client.c VERBATIM)
+            add_custom_target(key_chord_fixture ALL DEPENDS ${KEY_CHORD_FIXTURE})
+            add_executable(key_chord_test desktop/key_chord_test.cpp)
+            target_link_libraries(key_chord_test PRIVATE raven_cpu)
+            add_dependencies(key_chord_test key_chord_fixture raven-bootstrap)
+            add_test(NAME native_key_chord COMMAND key_chord_test $<TARGET_FILE:raven-bootstrap> ${KEY_CHORD_FIXTURE})
+            set_tests_properties(native_key_chord PROPERTIES TIMEOUT 30)
         endif()
         set(INITIAL_MESSAGE_FIXTURES ${CMAKE_CURRENT_BINARY_DIR}/initial-message-fixtures)
         add_custom_command(OUTPUT ${INITIAL_MESSAGE_FIXTURES}/client.exe ${INITIAL_MESSAGE_FIXTURES}/exit.exe
