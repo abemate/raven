@@ -100,7 +100,7 @@ def provision_fonts(output):
     name, payload = ar_member(data, "data.tar")
     tarball = output / name
     tarball.write_bytes(payload)
-    subprocess.run(["tar", "-xf", tarball, "-C", fonts, "--strip-components=6", "--wildcards", "*/Liberation*-Regular.ttf"], check=True)
+    subprocess.run(["tar", "-xf", tarball, "-C", fonts, "--strip-components=6", "--wildcards", "*/Liberation*.ttf"], check=True)
     tarball.unlink()
     for font, digest in FONTS.items():
         if hashlib.sha256((fonts / font).read_bytes()).hexdigest() != digest:
