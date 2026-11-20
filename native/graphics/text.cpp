@@ -9,6 +9,7 @@
 #include "include/core/SkTypeface.h"
 #include "include/ports/SkFontMgr_empty.h"
 #include <filesystem>
+#include <map>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -24,12 +25,49 @@ static uint32_t field(std::span<const uint8_t> bytes,size_t at,size_t count=4)
 	return value;
 }
 
+// A function-local slot, set while static objects of other files are being constructed.
+static InstalledFontLookup &installed_font_lookup_slot()
+{
+	static InstalledFontLookup lookup;
+	return lookup;
+}
+
+void set_installed_font_lookup(InstalledFontLookup lookup)
+{
+	installed_font_lookup_slot()=std::move(lookup);
+}
+
 struct TextRenderer::State {
 	std::array<sk_sp<SkTypeface>,3> faces;
 	// Every bundled style: family (sans, mono, serif, then the dialog face) by regular, bold, italic, bold italic.
 	std::array<std::array<sk_sp<SkTypeface>,4>,4> styled;
 	// Optional host faces that supply glyphs the bundled family lacks; only the general (non-qualified) text path uses them.
 	std::vector<sk_sp<SkTypeface>> fallbacks;
+	sk_sp<SkFontMgr> manager;
+	// A face of an installed font, found once for each family, weight and slant; a null entry is a family that is not installed.
+	std::map<std::u16string,sk_sp<SkTypeface>> installed;
+
+	// The bundled families stand for the usual Windows faces, whether or not the system has its own copies; any other family that is
+	// installed is drawn from its own file.
+	sk_sp<SkTypeface> installed_face(std::span<const uint8_t,92> definition,uint32_t weight,bool italic)
+	{
+		std::u16string family;
+		for (size_t i=0;i<32;++i) {
+			const auto c=char16_t(field(definition,28+i*2,2)); if (!c) break;
+			family.push_back(c>=u'A' && c<=u'Z' ? char16_t(c+32) : c);
+		}
+		static const std::u16string_view usual[]={u"",u"arial",u"courier new",u"times new roman",u"ms shell dlg",u"ms shell dlg 2",u"ms sans serif",u"tahoma",
+			u"segoe ui",u"verdana",u"lucida console",u"consolas",u"microsoft sans serif",u"raven sans",u"liberation sans",u"liberation mono",u"liberation serif"};
+		if (std::find(std::begin(usual),std::end(usual),std::u16string_view(family))!=std::end(usual)) return nullptr;
+		auto key=family; key.push_back(char16_t(weight)); key.push_back(italic ? u'i' : u'r');
+		if (const auto known=installed.find(key); known!=installed.end()) return known->second;
+		sk_sp<SkTypeface> face;
+		if (const auto &lookup=installed_font_lookup_slot())
+			if (const auto file=lookup(family,weight,italic))
+				face=manager->makeFromFile(file->path.c_str(),int(file->index));
+		installed[key]=face;
+		return face;
+	}
 
 	static bool contains_any(const std::string &name,std::initializer_list<const char *> words)
 	{
@@ -57,8 +95,8 @@ struct TextRenderer::State {
 		const size_t style=(weight>=600 ? 1U : 0U)|(italic ? 2U : 0U);
 		// Dialogs laid out for Tahoma get Raven Sans, which has its widths and heights, when it is bundled. Like Tahoma it has
 		// no italic, so an italic request keeps the upright face.
-		sk_sp<SkTypeface> face;
-		if (name=="tahoma" || name=="ms shell dlg 2" || name=="raven sans")
+		sk_sp<SkTypeface> face=installed_face(definition,uint32_t(weight),italic);
+		if (!face && (name=="tahoma" || name=="ms shell dlg 2" || name=="raven sans"))
 			face=styled[3][style&1U];
 		if (!face) face=styled[family][style];
 		if (!face) face=styled[family][0];
@@ -107,6 +145,7 @@ struct TextRenderer::State {
 TextRenderer::TextRenderer(const std::string &directory) : state(std::make_unique<State>())
 {
 	auto manager=SkFontMgr_New_Custom_Empty();
+	state->manager=manager;
 	const std::array<const char *,3> files{"LiberationSans-Regular.ttf","LiberationMono-Regular.ttf","LiberationSerif-Regular.ttf"};
 	for (size_t i=0;i<files.size();++i) {
 		state->faces[i]=manager->makeFromFile((directory+"/"+files[i]).c_str());

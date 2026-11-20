@@ -1,5 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -20,6 +24,15 @@ struct TextExtent {
 };
 
 // Immutable typefaces and transient glyph masks; no Windows resource identities.
+// The file of a font installed on the system, found by family, weight and slant.
+struct InstalledFontFile {
+	std::string path;
+	uint32_t index = 0;
+};
+using InstalledFontLookup = std::function<std::optional<InstalledFontFile>(std::u16string_view family, uint32_t weight, bool italic)>;
+// Tells the renderer how to find installed fonts; the font service does at start.
+void set_installed_font_lookup(InstalledFontLookup lookup);
+
 class TextRenderer {
 public:
 	explicit TextRenderer(const std::string &directory);

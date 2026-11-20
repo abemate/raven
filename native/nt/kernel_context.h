@@ -133,6 +133,9 @@ struct InstalledFamily {
 	bool fixed = false;
 	uint32_t unicode_ranges[4]{};
 	uint32_t code_pages[2]{};
+	// The file and its face index, for a face that was found on disk.
+	std::string path;
+	uint32_t face_index = 0;
 };
 // The families of the fonts installed in the prefix, in name order; none without FreeType.
 std::vector<InstalledFamily> installed_font_families();

@@ -1,6 +1,7 @@
 #include "kernel_context.h"
 #include "prefix.h"
 #include "text.h"
+#include "graphics/text.h"
 
 #ifdef RAVEN_FREETYPE
 #include <ft2build.h>
@@ -183,6 +184,8 @@ std::vector<uint8_t> scan_fonts()
 						found.unicode_ranges[0] |= 3;
 						found.code_pages[0] = 1;
 					}
+					found.path = walk->path().string();
+					found.face_index = uint32_t(index);
 					scanned_faces.push_back(std::move(found));
 					std::vector<uint8_t> record;
 					put32(record, 0);
@@ -236,6 +239,28 @@ std::vector<InstalledFamily> installed_font_families()
 		families.push_back(std::move(face));
 	return families;
 }
+
+// The file of the installed face of a family closest to the weight and slant asked for: GDI draws a font the program selected by name
+// from that font, not from the bundled family that stands for the usual Windows faces.
+static const bool font_files_known = (set_installed_font_lookup([](std::u16string_view family, uint32_t weight, bool italic) -> std::optional<InstalledFontFile> {
+	std::lock_guard lock(font_mutex);
+	scan_fonts();
+	const auto fold = [](char16_t c) { return c >= u'A' && c <= u'Z' ? char16_t(c + 32) : c; };
+	const InstalledFamily *best = nullptr;
+	int best_distance = 0;
+	for (const auto &face : scanned_faces) {
+		if (face.name.size() != family.size() || !std::equal(face.name.begin(), face.name.end(), family.begin(), [&](char16_t a, char16_t b) { return fold(a) == fold(b); }))
+			continue;
+		const int distance = (face.italic != italic ? 1000 : 0) + std::abs(int(face.weight) - int(weight));
+		if (!best || distance < best_distance) {
+			best = &face;
+			best_distance = distance;
+		}
+	}
+	if (!best)
+		return std::nullopt;
+	return InstalledFontFile{best->path, best->face_index};
+}), true);
 
 std::vector<InstalledFamily> installed_font_styles(std::u16string_view family)
 {
