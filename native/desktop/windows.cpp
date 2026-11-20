@@ -354,8 +354,10 @@ void NativeWindows::present(uint64_t handle, bool force)
 		return;
 	}
 	if (presentation.transient_for) presentation.transient_for(handle,owning ? owner : 0);
+	const bool first_shown=!window->on_host;
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
 	if (auto *shown=objects.window(handle)) shown->on_host=true;
+	if (first_shown && !(owning && owning->on_host)) release_held_activation(handle);
 	place_host_surface(handle);
 	place_overlays(handle,*bitmap,pixels);
 }
@@ -1017,7 +1019,9 @@ void NativeWindows::answer_foreign_sends()
 		[this](uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,const std::vector<uint8_t> &data) -> uint64_t {
 			if (!std::as_const(objects).window(window)) return 0;
 			if (message==foreign_activate_message) {
-				if (presentation.activate) presentation.activate(objects.window_root(window),std::string(data.begin(),data.end()));
+				if (presentation.activate)
+					held_activation=HeldActivation{objects.window_root(window),std::string(data.begin(),data.end()),
+						std::chrono::steady_clock::now()+std::chrono::milliseconds(1500)};
 				return 1;
 			}
 			if (message!=0x4a) return send(window,message,wparam,lparam);
@@ -1041,6 +1045,20 @@ void NativeWindows::answer_foreign_sends()
 				throw;
 			}
 		});
+}
+
+void NativeWindows::release_held_activation(uint64_t shown)
+{
+	if (!held_activation) return;
+	const bool expired=std::chrono::steady_clock::now()>=held_activation->until;
+	if (!shown && !expired) return;
+	const auto held=std::move(*held_activation);
+	held_activation.reset();
+	// A new unowned window shown in time is what the launch opened; past the moment, the window that took the work comes forward.
+	const auto target=shown && !expired ? shown : held.target;
+	if (std::getenv("RAVEN_TRACE_ACTIVATION"))
+		fprintf(stderr,"activation handed over: %s %llx\n",shown && !expired ? "new window" : "window that took the work",(unsigned long long)target);
+	if (presentation.activate && std::as_const(objects).window(target)) presentation.activate(target,held.token);
 }
 
 std::optional<uint64_t> NativeWindows::send_foreign(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,std::chrono::milliseconds timeout)
@@ -1691,6 +1709,7 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 				take_event(event);
 		if (kinds & 0x8) import_foreign_posts();
 		if (kinds & 0x40) answer_foreign_sends();
+		if (held_activation) release_held_activation();
 		// Messages sent from other threads run before anything is retrieved, as they do while a Windows thread pumps its queue.
 		if (kinds & 0x40) serve_sent();
 		auto found=std::find_if(messages.begin(),messages.end(),matches);

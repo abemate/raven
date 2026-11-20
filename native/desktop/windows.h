@@ -210,6 +210,12 @@ private:
 	void answer_foreign_sends();
 	// The process AllowSetForegroundWindow named last and has not yet been handed this launch's permission to come forward; 0 for none.
 	uint32_t foreground_allowed=0;
+	// The permission to come forward that a later launch handed over with its work, held a moment for the window the work opens: used at
+	// once on the window that took the work, it brought that window's screen forward just before the new window was placed, so the new
+	// window opened there rather than where the user was. Unclaimed, it goes to that window when the moment is over.
+	struct HeldActivation { uint64_t target=0; std::string token; std::chrono::steady_clock::time_point until{}; };
+	std::optional<HeldActivation> held_activation;
+	void release_held_activation(uint64_t shown=0);
 	// A message to a window of another process: the owner's answer, or nothing when it gave none in time.
 	std::optional<uint64_t> send_foreign(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,std::chrono::milliseconds timeout);
 	void import_foreign_frames();
