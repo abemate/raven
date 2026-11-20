@@ -1422,6 +1422,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(key_tip_test key_tip_fixture raven-bootstrap)
             add_test(NAME native_key_tip COMMAND key_tip_test $<TARGET_FILE:raven-bootstrap> ${KEY_TIP_FIXTURE})
             set_tests_properties(native_key_tip PROPERTIES TIMEOUT 30)
+            set(CURSOR_IMAGE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-image.exe)
+            add_custom_command(OUTPUT ${CURSOR_IMAGE_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${CURSOR_IMAGE_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/cursor_image_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/cursor_image_client.c VERBATIM)
+            add_custom_target(cursor_image_fixture ALL DEPENDS ${CURSOR_IMAGE_FIXTURE})
+            add_executable(cursor_image_test desktop/cursor_image_test.cpp)
+            target_link_libraries(cursor_image_test PRIVATE raven_cpu)
+            add_dependencies(cursor_image_test cursor_image_fixture raven-bootstrap)
+            add_test(NAME native_cursor_image COMMAND cursor_image_test $<TARGET_FILE:raven-bootstrap> ${CURSOR_IMAGE_FIXTURE})
+            set_tests_properties(native_cursor_image PROPERTIES TIMEOUT 30)
             set(CLIPBOARD_BOUNDS_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/clipboard-bounds.exe)
             add_custom_command(OUTPUT ${CLIPBOARD_BOUNDS_FIXTURE}
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector

@@ -110,6 +110,9 @@ struct DesktopPresentation {
 	// Asks the desktop to bring a top-level window forward, with the permission it gave a launch; without one (empty) the window asks by
 	// itself, which a desktop may answer by only marking it as wanting attention.
 	std::function<void(uint64_t handle,const std::string &token)> activate;
+	// The pointer as a picture the program drew: premultiplied BGRA rows from the top, and the point in it that follows the mouse. It stays
+	// until the next call of this or of cursor. Absent, such cursors show as the arrow.
+	std::function<void(uint32_t hot_x,uint32_t hot_y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels)> cursor_image;
 };
 
 }

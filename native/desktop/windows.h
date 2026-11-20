@@ -515,6 +515,9 @@ private:
 	void update_warp_lock(bool warped);
 	// Hands the cursor the program shows to the host pointer.
 	void show_cursor();
+	bool show_cursor_image();
+	// What the host pointer last showed of a cursor the program drew: its hot spot, size and pixels. Empty while a system cursor shows.
+	std::vector<uint8_t> shown_cursor_image;
 	std::map<uint64_t,std::array<int32_t,6>> raw_reports;
 	uint64_t next_raw_report=0x1000;
 	void raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,int16_t wheel);

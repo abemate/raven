@@ -736,10 +736,46 @@ void NativeWindows::update_warp_lock(bool warped)
 	warp_lock_window=active;
 }
 
+// A cursor the program drew (PDF-XChange's Pencil) goes to the host as a picture, once while it stays the same: programs set their cursor
+// on every mouse move.
+bool NativeWindows::show_cursor_image()
+{
+	if (!presentation.cursor_image || cursor_count<0 || !current_cursor) return false;
+	const auto *cursor=objects.icon(current_cursor);
+	if (!cursor) return false;
+	const auto &image=cursor->image;
+	const uint32_t width=image.color.width,height=image.color.height;
+	const size_t count=size_t(width)*height;
+	if (!width || !height || width>256 || height>256 || image.color.rgba.size()!=count*4 || image.and_mask.size()!=count) return false;
+	std::vector<uint8_t> pixels(count*4);
+	for (size_t at=0;at<count;++at) {
+		const uint8_t *from=&image.color.rgba[at*4];
+		uint8_t alpha=from[3];
+		// A pixel that inverts the screen beneath it has no equivalent on a host pointer; black is what it shows over the usual white page.
+		const bool inverting=!image.has_alpha && image.and_mask[at] && (image.xor_mask.empty() ? from[0] || from[1] || from[2] : image.xor_mask[at]);
+		if (inverting) { pixels[at*4+3]=255; continue; }
+		pixels[at*4]=uint8_t(from[2]*alpha/255);
+		pixels[at*4+1]=uint8_t(from[1]*alpha/255);
+		pixels[at*4+2]=uint8_t(from[0]*alpha/255);
+		pixels[at*4+3]=alpha;
+	}
+	std::vector<uint8_t> shown(16+pixels.size());
+	const uint32_t header[]{cursor->hotspot_x,cursor->hotspot_y,width,height};
+	std::memcpy(shown.data(),header,sizeof header);
+	std::memcpy(shown.data()+16,pixels.data(),pixels.size());
+	if (shown!=shown_cursor_image) {
+		presentation.cursor_image(cursor->hotspot_x,cursor->hotspot_y,width,height,pixels);
+		shown_cursor_image=std::move(shown);
+	}
+	return true;
+}
+
 void NativeWindows::show_cursor()
 {
 	if (!presentation.cursor) return;
-	// A cursor that is not a system one (made from a bitmap, or a resource of a module) shows as the arrow.
+	if (show_cursor_image()) return;
+	shown_cursor_image.clear();
+	// A cursor that is not a system one and has no picture (a resource of a module) shows as the arrow.
 	uint32_t shape=32512;
 	if (cursor_count<0 || !current_cursor) shape=0;
 	else if (current_cursor>=desktop_stock_cursor && current_cursor<desktop_stock_cursor+desktop_stock_cursor_count)

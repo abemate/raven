@@ -171,6 +171,11 @@ struct WaylandPresentation::State {
 #endif
 	// The cursor the program shows and the serial of the pointer's arrival on one of its surfaces, which setting the cursor quotes.
 	uint32_t cursor=32512,enter_serial=0;
+	// A cursor the program drew, shown instead of the system cursor above.
+	wl_surface *cursor_surface=nullptr;
+	std::unique_ptr<Buffer> cursor_buffer;
+	int32_t cursor_hot_x=0,cursor_hot_y=0;
+	bool cursor_custom=false;
 	bool pointer_inside=false;
 	uint64_t pointer_window=0;
 	uint64_t keyboard_window=0;
@@ -264,6 +269,8 @@ struct WaylandPresentation::State {
 		if (shape_device) wp_cursor_shape_device_v1_destroy(shape_device);
 		if (shape_manager) wp_cursor_shape_manager_v1_destroy(shape_manager);
 #endif
+		if (cursor_surface) wl_surface_destroy(cursor_surface);
+		cursor_buffer.reset();
 		overlays.clear();
 		hosted.clear();
 #ifdef RAVEN_WAYLAND_VIEWPORTER
@@ -339,9 +346,33 @@ struct WaylandPresentation::State {
 #endif
 	}
 
+	// A picture the program drew becomes the pointer's own surface; it stays until a system cursor replaces it.
+	void show_cursor_image(uint32_t hot_x,uint32_t hot_y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) {
+		if (!shm || !compositor || pixels.size()!=size_t(width)*height*4) return;
+		auto buffer=std::make_unique<Buffer>(); buffer->size=pixels.size(); buffer->width=width; buffer->height=height;
+		const int descriptor=int(syscall(SYS_memfd_create,"raven-cursor",MFD_CLOEXEC));
+		if (descriptor<0) return;
+		if (ftruncate(descriptor,off_t(buffer->size))<0) { close(descriptor); return; }
+		buffer->pixels=mmap(nullptr,buffer->size,PROT_READ|PROT_WRITE,MAP_SHARED,descriptor,0);
+		if (buffer->pixels==MAP_FAILED) { close(descriptor); return; }
+		std::memcpy(buffer->pixels,pixels.data(),pixels.size());
+		wl_shm_pool *pool=wl_shm_create_pool(shm,descriptor,int32_t(buffer->size)); close(descriptor);
+		buffer->proxy=wl_shm_pool_create_buffer(pool,0,int32_t(width),int32_t(height),int32_t(width*4),WL_SHM_FORMAT_ARGB8888);
+		wl_shm_pool_destroy(pool);
+		if (!cursor_surface) cursor_surface=wl_compositor_create_surface(compositor);
+		wl_surface_attach(cursor_surface,buffer->proxy,0,0);
+		wl_surface_damage(cursor_surface,0,0,int32_t(width),int32_t(height));
+		wl_surface_commit(cursor_surface);
+		// The previous picture goes only now that the surface has let go of it.
+		cursor_buffer=std::move(buffer);
+		cursor_hot_x=int32_t(hot_x); cursor_hot_y=int32_t(hot_y); cursor_custom=true;
+		show_cursor();
+	}
+
 	void show_cursor() {
 		if (!pointer || !pointer_inside) return;
-		if (!cursor) wl_pointer_set_cursor(pointer,enter_serial,nullptr,0,0);
+		if (cursor_custom) wl_pointer_set_cursor(pointer,enter_serial,cursor_surface,cursor_hot_x,cursor_hot_y);
+		else if (!cursor) wl_pointer_set_cursor(pointer,enter_serial,nullptr,0,0);
 #ifdef RAVEN_WAYLAND_CURSOR_SHAPE
 		else if (shape_device) wp_cursor_shape_device_v1_set_shape(shape_device,enter_serial,cursor_shape(cursor));
 #endif
@@ -1406,7 +1437,8 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 	[this] { state->connect(); return state->screen_size(); },
 	[this](uint64_t handle,bool maximized) { state->maximize(handle,maximized); },
 	[this](uint32_t shape) {
-		if (state->cursor==shape) return;
+		if (!state->cursor_custom && state->cursor==shape) return;
+		state->cursor_custom=false;
 		state->cursor=shape;
 		state->show_cursor();
 	},
@@ -1416,6 +1448,7 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
 	result.activate=[this](uint64_t handle,const std::string &token) { state->activate(handle,token); };
 	result.minimize=[this](uint64_t handle) { state->minimize(handle); };
+	result.cursor_image=[this](uint32_t hot_x,uint32_t hot_y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels) { state->show_cursor_image(hot_x,hot_y,width,height,pixels); };
 	return result;
 }
 
