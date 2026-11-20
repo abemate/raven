@@ -316,6 +316,8 @@ struct DesktopWindow {
 	uint64_t order = 0;
 	// Outer rectangle to return to when a maximized or minimized window is restored.
 	DesktopRect restore{};
+	// A window minimized while maximized comes back maximized.
+	bool restore_maximized = false;
 	std::map<std::u16string,uint64_t> properties{};
 	// Horizontal and vertical scroll bars (SB_HORZ, SB_VERT).
 	std::array<DesktopScroll,2> scroll{};

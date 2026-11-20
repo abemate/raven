@@ -122,7 +122,7 @@ struct WaylandPresentation::State {
 		bool translucent=false;
 		// The owner's toplevel this one was last made a child of (xdg_toplevel_set_parent), which keeps it above the owner.
 		xdg_toplevel *parent_role=nullptr;
-		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false;
+		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false, iconic=false;
 		// The compositor maximized or restored the window itself (state_changed), and when Raven last asked it to.
 		bool state_changed=false;
 		std::chrono::steady_clock::time_point maximize_requested{};
@@ -464,6 +464,11 @@ struct WaylandPresentation::State {
 					if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"keyboard enter %p -> %llx\n",(void *)surface,(unsigned long long)state.keyboard_window);
 					// Focus sent to a surface just destroyed, as a popup menu made again or closed, was on its way before the compositor heard: nothing has focus.
 					if (!state.keyboard_window) { state.keyboard_event({0,0,0,0,DesktopEventKind::keyboard_focus}); return; }
+					// Wayland does not say when a minimized window comes back; it getting the keyboard is the sign. The program is told to restore.
+					if (auto &shown=*state.surfaces.at(state.keyboard_window); shown.iconic) {
+						shown.iconic=false;
+						try { state.pending.push_back({state.keyboard_window,0x112,0xf120,0}); } catch (...) { state.input_failed=true; }
+					}
 					DesktopEvent event{state.keyboard_window,0,0,0,DesktopEventKind::keyboard_focus};
 					try {
 						event.held_keys.resize(keys->size/sizeof(uint32_t));
@@ -1248,6 +1253,15 @@ struct WaylandPresentation::State {
 		}
 	}
 
+	// The window stays on the taskbar with its surface; only the compositor hides it.
+	void minimize(uint64_t handle) {
+		const auto found=surfaces.find(handle);
+		if (found==surfaces.end() || !found->second->role) return;
+		found->second->iconic=true;
+		xdg_toplevel_set_minimized(found->second->role);
+		wl_display_flush(display);
+	}
+
 #ifdef RAVEN_WAYLAND_ACTIVATION
 	struct TokenRequest { State *state; uint64_t handle; };
 
@@ -1401,6 +1415,7 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 	}};
 	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
 	result.activate=[this](uint64_t handle,const std::string &token) { state->activate(handle,token); };
+	result.minimize=[this](uint64_t handle) { state->minimize(handle); };
 	return result;
 }
 

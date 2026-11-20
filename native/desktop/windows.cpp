@@ -221,6 +221,8 @@ void NativeWindows::present(uint64_t handle, bool force)
 	dirty_roots.erase(handle);
 	// Without a display the frame has nowhere to go and is dropped; the window lives on as on a screen that is switched off.
 	if (!presentation.present) return;
+	// A minimized window shows nothing: a repaint must not bring it back, and it is presented again when it is restored.
+	if (const auto *minimized=std::as_const(objects).window(handle); minimized && (minimized->style & 0x20000000U)) return;
 	// A window without area shows nothing, as on Windows. Office sizes the shadows of its dialogs and menus only through
 	// UpdateLayeredWindow, which draws nothing here: shown, they were black pixels where windows open by default.
 	if (const auto *empty=std::as_const(objects).window(handle);

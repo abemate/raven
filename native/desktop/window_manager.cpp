@@ -153,7 +153,10 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 		} else if (minimize && !is_min) {
 			if (!is_max)
 				window->restore = window->outer;
+			window->restore_maximized = is_max;
 			window->style = (window->style & ~ws_maximize) | ws_minimize;
+		} else if (command == 9 && is_min && window->restore_maximized) {
+			window->style = (window->style & ~ws_minimize) | ws_maximize;
 		} else if ((command == 9 || command == 1 || command == 10) && (is_max || is_min)) {
 			window->style &= ~(ws_maximize | ws_minimize);
 			const auto target = window->restore.right > window->restore.left ? window->restore : window->outer;
