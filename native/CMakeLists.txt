@@ -2831,6 +2831,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                             -o ${peer_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/peer_process_client.c -ladvapi32 -lkernel32 -lgcc
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/peer_process_client.c VERBATIM)
                     list(APPEND PEER_PROCESS_CLIENTS ${peer_client})
+                    set(monitor_scale_client ${CMAKE_CURRENT_BINARY_DIR}/monitor-scale${width}.exe)
+                    add_custom_command(OUTPUT ${monitor_scale_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${monitor_scale_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/monitor_scale_client.c -lshcore -luser32 -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/monitor_scale_client.c VERBATIM)
+                    add_custom_target(monitor_scale_fixture_x${width} ALL DEPENDS ${monitor_scale_client})
+                    add_test(NAME native_monitor_scale_x${width} COMMAND raven --run-process --execution=native ${monitor_scale_client})
+                    set_tests_properties(native_monitor_scale_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/monitor-scale-prefix${width})
                     set(raw_client ${CMAKE_CURRENT_BINARY_DIR}/raw-device${width}.exe)
                     add_custom_command(OUTPUT ${raw_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
