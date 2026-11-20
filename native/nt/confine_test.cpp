@@ -144,6 +144,9 @@ int main(int count, char **arguments)
 	check(opens(root / "prefix/settings.ini", O_WRONLY | O_CREAT), "the confined runtime cannot write into its prefix");
 	check(opens("/usr"), "the confined runtime cannot read the system");
 	check(opens(root / "dxvk/dxgi.dll") && opens(root / "vkd3d/d3d12.dll"), "the confined runtime cannot read the Direct3D libraries");
+#ifdef RAVEN_FONT_DIRECTORY
+	check(opens(std::filesystem::path(RAVEN_FONT_DIRECTORY) / "LiberationSans-Regular.ttf"), "the confined runtime cannot read its fonts");
+#endif
 
 	// A grant recorded while the program runs reaches it through the broker, which refuses anything else.
 	check(!opens(root / "later/picture.png"), "a folder granted later is open before the grant");

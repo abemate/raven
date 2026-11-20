@@ -430,6 +430,10 @@ bool confine(const std::filesystem::path &prefix, bool abstract_sockets)
 		allow(ruleset, system, run_rights, all);
 	allow(ruleset, runtime, run_rights, all);
 	allow(ruleset, environment_path("RAVEN_OPENGL_DIRECTORY"), run_rights, all);
+#ifdef RAVEN_FONT_DIRECTORY
+	// The fonts the runtime draws text with, when they are not bundled beside it: the README's build keeps them in components/text.
+	allow(ruleset, RAVEN_FONT_DIRECTORY, read_rights, all);
+#endif
 	// The Direct3D libraries come from each folder RAVEN_D3D_DIRECTORY lists, separated by colons.
 	if (const char *directories = std::getenv("RAVEN_D3D_DIRECTORY"))
 		for (std::string_view rest = directories; !rest.empty();) {
