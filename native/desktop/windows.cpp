@@ -1389,8 +1389,13 @@ void NativeWindows::receive(const DesktopEvent &event)
 		// The host's configured size applies to resizable windows and to a requested maximization.
 		const auto *window=std::as_const(objects).window(event.window);
 		if (!window || window->parent || !(window->style & (0x40000U | 0x01000000U)) || event.x<=0 || event.y<=0) return;
-		const DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+event.x,window->outer.top+event.y};
-		if (outer.right-outer.left==window->outer.right-window->outer.left && outer.bottom-outer.top==window->outer.bottom-window->outer.top) return;
+		// A maximized window fills the screen from its corner, as ShowWindow's maximizing places it. One created maximized (PDF-XChange starts
+		// so) still has its saved position: left there it reaches past the bottom of the screen and the program lays itself out short by that much.
+		const bool full=(window->style & 0x01000000U)!=0;
+		const int32_t left=full ? 0 : window->outer.left,top=full ? 0 : window->outer.top;
+		const DesktopRect outer{left,top,left+event.x,top+event.y};
+		if (left==window->outer.left && top==window->outer.top && outer.right-outer.left==window->outer.right-window->outer.left &&
+			outer.bottom-outer.top==window->outer.bottom-window->outer.top) return;
 		// The compositor already resized the host window, so it stays and receives the next frame at the new size.
 		keep_host_window=true;
 		try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=false; throw; }

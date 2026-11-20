@@ -1410,6 +1410,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(drag_restore_test drag_restore_fixture raven-bootstrap)
             add_test(NAME native_drag_restore COMMAND drag_restore_test $<TARGET_FILE:raven-bootstrap> ${DRAG_RESTORE_FIXTURE})
             set_tests_properties(native_drag_restore PROPERTIES TIMEOUT 30)
+            set(MAXIMIZED_ORIGIN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/maximized-origin.exe)
+            add_custom_command(OUTPUT ${MAXIMIZED_ORIGIN_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${MAXIMIZED_ORIGIN_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/maximized_origin_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/maximized_origin_client.c VERBATIM)
+            add_custom_target(maximized_origin_fixture ALL DEPENDS ${MAXIMIZED_ORIGIN_FIXTURE})
+            add_executable(maximized_origin_test desktop/maximized_origin_test.cpp)
+            target_link_libraries(maximized_origin_test PRIVATE raven_cpu)
+            add_dependencies(maximized_origin_test maximized_origin_fixture raven-bootstrap)
+            add_test(NAME native_maximized_origin COMMAND maximized_origin_test $<TARGET_FILE:raven-bootstrap> ${MAXIMIZED_ORIGIN_FIXTURE})
+            set_tests_properties(native_maximized_origin PROPERTIES TIMEOUT 30)
             set(KEY_TIP_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/key-tip-client.exe)
             add_custom_command(OUTPUT ${KEY_TIP_FIXTURE}
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
