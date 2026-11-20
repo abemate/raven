@@ -1190,7 +1190,9 @@ struct WaylandPresentation::State {
 			xdg_surface_add_listener(window->shell,&surface_listener,window.get());
 			xdg_toplevel_add_listener(window->role,&role_listener,window.get());
 			xdg_toplevel_set_title(window->role,std::string(title).c_str());
-			xdg_toplevel_set_app_id(window->role,"raven.native");
+			// The desktop finds the icon through the menu entry of this name; a launcher names its own program with RAVEN_APP_ID.
+			const char *app_id=std::getenv("RAVEN_APP_ID");
+			xdg_toplevel_set_app_id(window->role,app_id && *app_id ? app_id : "raven.native");
 			// An owned window (a dialog) stays above its owner, as on Windows.
 			if ((window->parent_role=owner_role(handle))) xdg_toplevel_set_parent(window->role,window->parent_role);
 			// A floating window starts at its requested size; a maximized one follows the compositor's work area.

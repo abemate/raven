@@ -5,5 +5,6 @@ Comment=Edit and annotate PDF documents
 Exec=pdfx %F
 Icon=application-pdf
 Terminal=false
+StartupWMClass=pdfx-raven
 MimeType=application/pdf;
 Categories=Office;Viewer;

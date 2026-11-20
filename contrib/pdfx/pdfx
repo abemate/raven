@@ -8,6 +8,8 @@ set -euo pipefail
 RAVEN=${RAVEN:-$HOME/raven/build/native/raven}
 PDFX_DIR=${PDFX_DIR:-$HOME/.local/share/raven/pdfx-program}
 export RAVEN_PREFIX=${RAVEN_PREFIX:-$HOME/.local/share/raven/pdfx}
+# The desktop matches windows to the menu entry pdfx-raven.desktop by this name, which gives them its icon.
+export RAVEN_APP_ID=${RAVEN_APP_ID:-pdfx-raven}
 # PDFX_LOG_DIR  where each run's log goes     (default: ~/.local/state/pdfx; the newest 20 are kept)
 # setup-host.sh records the commit Raven was built from, so a log says which build ran.
 PDFX_BUILD=unknown
