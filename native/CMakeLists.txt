@@ -2789,6 +2789,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_process_token_x${width} COMMAND raven --run-process --execution=native --timeout-ms=45000 ${token_client})
                     set_tests_properties(native_process_token_x${width} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/token-prefix${width})
+                    set(reverse_search_client ${CMAKE_CURRENT_BINARY_DIR}/reverse-search${width}.exe)
+                    add_custom_command(OUTPUT ${reverse_search_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${reverse_search_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/reverse_search_client.c -lshlwapi -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/reverse_search_client.c VERBATIM)
+                    add_custom_target(reverse_search_fixture_x${width} ALL DEPENDS ${reverse_search_client})
+                    add_test(NAME native_reverse_search_x${width} COMMAND raven --run-process --execution=native ${reverse_search_client})
+                    set_tests_properties(native_reverse_search_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/reverse-search-prefix${width})
                     set(status_error_client ${CMAKE_CURRENT_BINARY_DIR}/status-error${width}.exe)
                     add_custom_command(OUTPUT ${status_error_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
