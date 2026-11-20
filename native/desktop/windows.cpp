@@ -86,6 +86,7 @@ void NativeWindows::shutdown()
 void NativeWindows::remove_host_window(uint64_t handle)
 {
 	if (surface_cleanup) surface_cleanup(handle);
+	if (auto *record=objects.window(handle)) record->on_host=false;
 	// A new host window starts without the state, so it is sent again with the next frame.
 	host_maximized_state.erase(handle);
 	if (presentation.remove) presentation.remove(handle);
@@ -345,8 +346,13 @@ void NativeWindows::present(uint64_t handle, bool force)
 			presentation.maximize(handle,wanted);
 		}
 	}
+	if (!window->on_host && covered_by_active(handle,*window)) {
+		covered_windows.insert(handle);
+		return;
+	}
 	if (presentation.transient_for) presentation.transient_for(handle,owning ? owner : 0);
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
+	if (auto *shown=objects.window(handle)) shown->on_host=true;
 	place_host_surface(handle);
 	place_overlays(handle,*bitmap,pixels);
 }
@@ -745,6 +751,13 @@ void NativeWindows::flush_dirty(bool force)
 {
 	settle_focus_leave(false);
 	import_foreign_frames();
+	// A window that waited beneath a dialog shows once the dialog has gone.
+	for (auto at=covered_windows.begin();at!=covered_windows.end();) {
+		const auto *window=std::as_const(objects).window(*at);
+		if (window && objects.window_visible(*at) && covered_by_active(*at,*window)) { ++at; continue; }
+		if (window) dirty_roots.insert(*at);
+		at=covered_windows.erase(at);
+	}
 	const auto roots=std::move(dirty_roots);
 	dirty_roots.clear();
 	if (!presentation.present) return;
@@ -1445,6 +1458,23 @@ uint64_t NativeWindows::host_owner(const DesktopWindow &window) const
 		if (record && record!=&window && !record->parent) return root;
 	}
 	return 0;
+}
+
+// A window shown with SW_SHOWNOACTIVATE keeps its place in the stacking, so one that lies beneath the active dialog stays beneath it. A
+// compositor puts every new surface on top, and PXC's "Opening document" progress window would hide the password dialog it waits behind:
+// the surface is not made until the dialog goes.
+bool NativeWindows::covered_by_active(uint64_t handle,const DesktopWindow &window) const
+{
+	if (window.parent || !window.shown_behind || !active || (window.ex_style & 8U)) return false;
+	const auto root=objects.window_root(active);
+	const auto *dialog=root ? std::as_const(objects).window(root) : nullptr;
+	if (!dialog || root==handle || dialog->parent || !dialog->owner || dialog->order<=window.order || !objects.window_visible(root)) return false;
+	// Windows always lie above their owners, whatever their order says: this window beneath the dialog it owns is covered, as PXC's is.
+	for (auto *at=&window;at->owner;at=std::as_const(objects).window(at->owner)) {
+		if (objects.window_root(at->owner)==root) return false;
+		if (!std::as_const(objects).window(at->owner)) break;
+	}
+	return true;
 }
 
 bool NativeWindows::shown_on_owner(const DesktopWindow &window) const

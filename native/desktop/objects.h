@@ -274,6 +274,8 @@ struct DesktopWindow {
 	std::optional<std::chrono::steady_clock::time_point> present_waiting{};
 	// Whether the window has been shown on the screen once: until then it waits longer for its first paint.
 	bool presented = false;
+	// Has a surface of its own on the host now, and was last shown without changing the stacking (SW_SHOWNOACTIVATE).
+	bool on_host = false, shown_behind = false;
 	// Whether the window has ever finished a WM_PAINT: one that has not shows nothing of its own yet.
 	bool painted = false;
 	// The frame extended into the client area by DwmExtendFrameIntoClientArea: left, right, top and bottom widths, a negative one for all of it.

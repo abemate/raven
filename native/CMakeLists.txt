@@ -1384,6 +1384,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(key_tip_test key_tip_fixture raven-bootstrap)
             add_test(NAME native_key_tip COMMAND key_tip_test $<TARGET_FILE:raven-bootstrap> ${KEY_TIP_FIXTURE})
             set_tests_properties(native_key_tip PROPERTIES TIMEOUT 30)
+            set(COVERED_WINDOW_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/covered-window-client.exe)
+            add_custom_command(OUTPUT ${COVERED_WINDOW_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${COVERED_WINDOW_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/covered_window_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/covered_window_client.c VERBATIM)
+            add_custom_target(covered_window_fixture ALL DEPENDS ${COVERED_WINDOW_FIXTURE})
+            add_executable(covered_window_test desktop/covered_window_test.cpp)
+            target_link_libraries(covered_window_test PRIVATE raven_cpu)
+            add_dependencies(covered_window_test covered_window_fixture raven-bootstrap)
+            add_test(NAME native_covered_window COMMAND covered_window_test $<TARGET_FILE:raven-bootstrap> ${COVERED_WINDOW_FIXTURE})
+            set_tests_properties(native_covered_window PROPERTIES TIMEOUT 30)
         endif()
         set(INITIAL_MESSAGE_FIXTURES ${CMAKE_CURRENT_BINARY_DIR}/initial-message-fixtures)
         add_custom_command(OUTPUT ${INITIAL_MESSAGE_FIXTURES}/client.exe ${INITIAL_MESSAGE_FIXTURES}/exit.exe

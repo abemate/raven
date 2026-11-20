@@ -264,6 +264,8 @@ private:
 	// PostQuitMessage codes by thread.
 	std::map<uint32_t,uint32_t> quits;
 	std::set<uint64_t> dirty_roots;
+	// Shown beneath the active dialog, and waiting for it to go: see covered_by_active.
+	std::set<uint64_t> covered_windows;
 	// The maximized state each top-level window last agreed with the desktop: what Raven asked for, or what the desktop reported.
 	// Only a change the program makes is sent, so a frame drawn before the desktop's own change arrives does not undo it.
 	std::map<uint64_t,bool> host_maximized_state;
@@ -329,6 +331,7 @@ private:
 	struct LastPress { uint64_t window=0; uint32_t message=0,time=0; int32_t x=0,y=0; } last_press;
 	// True when the window appears as a popup of its owner's host window rather than as a host window of its own.
 	bool shown_on_owner(const DesktopWindow &window) const;
+	bool covered_by_active(uint64_t handle,const DesktopWindow &window) const;
 	// The root whose host window shows a window placed by the program: its owner's, or the one a child moved to the desktop came from.
 	uint64_t host_owner(const DesktopWindow &window) const;
 	void place_pointer(const DesktopEvent &event,uint32_t message,uint32_t buttons,int64_t x,int64_t y);
