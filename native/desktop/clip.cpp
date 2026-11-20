@@ -57,7 +57,7 @@ bool NativeDesktop::clip_dispatch(std::string_view name)
 {
 	const bool rect=name=="CreateRectRgn" || name=="SetRectRgn" || name=="IntersectClipRect" || name=="ExcludeClipRect";
 	const bool points=name=="DPtoLP" || name=="LPtoDP";
-	const bool query=name=="GetRgnBox" || name=="GetClipBox" || name=="GetClipRgn" || name=="GetLayout";
+	const bool query=name=="GetRgnBox" || name=="GetClipBox" || name=="GetClipRgn" || name=="GetLayout" || name=="GetRandomRgn";
 	if (!rect && !points && !query && name!="CombineRgn" && name!="EqualRgn" && name!="OffsetRgn" &&
 		name!="PtInRegion" && name!="RectInRegion" && name!="SelectClipRgn" && name!="ExtSelectClipRgn" && name!="GetRegionData") return false;
 #ifndef RAVEN_PIXMAN
@@ -66,7 +66,7 @@ bool NativeDesktop::clip_dispatch(std::string_view name)
 	}
 #endif
 	const auto args=process.api_arguments(name=="GetLayout" ? 1 : rect ? (name=="CreateRectRgn" ? 4 : 5) :
-		name=="CombineRgn" ? 4 : points || name=="OffsetRgn" || name=="PtInRegion" || name=="ExtSelectClipRgn" || name=="GetRegionData" ? 3 : 2);
+		name=="CombineRgn" ? 4 : points || name=="OffsetRgn" || name=="GetRandomRgn" || name=="PtInRegion" || name=="ExtSelectClipRgn" || name=="GetRegionData" ? 3 : 2);
 	uint64_t result=0;
 	try {
 		const auto put_rect=[&](uint64_t output,DesktopRect box) {
@@ -140,6 +140,27 @@ bool NativeDesktop::clip_dispatch(std::string_view name)
 					if (!objects.replace_region(args[1],*device->application_clip)) throw uint32_t(8);
 					result=1;
 				}
+			} else if (name=="GetRandomRgn") {
+				// CLIPRGN and APIRGN are the application's clipping, as there is no meta region; METARGN is that missing meta region.
+				// SYSRGN is the part of the surface drawing can reach, inside the window, off the windows that cover it and inside the
+				// update region while BeginPaint lasts, in screen coordinates for a window's context. 1 answers a copy, 0 no region.
+				const auto which=uint32_t(args[2]);
+				required_region(args[1]);
+				std::optional<DesktopRegion> value;
+				if (which==1 || which==3) value=device->application_clip;
+				else if (which==4) {
+					DesktopRegion system=visibility(objects,*device);
+					system.offset(device->user_dx,device->user_dy);
+					if (device->visible) system.combine(system,*device->visible,1);
+					if (device->clip) system.combine(system,*device->clip,1);
+					if (const auto *window=std::as_const(objects).window(device->window))
+						system.offset(device->window_frame ? window->outer.left : window->x,device->window_frame ? window->outer.top : window->y);
+					value=std::move(system);
+				} else if (which!=2) throw uint32_t(87);
+				if (value) {
+					if (!objects.replace_region(args[1],std::move(*value))) throw uint32_t(8);
+					result=1;
+				}
 			} else if (name=="GetClipBox") {
 				const auto visible=visibility(objects,*device);auto box=visible.bounds();result=visible.complexity();
 				auto combined=device->application_clip;
@@ -192,9 +213,9 @@ bool NativeDesktop::clip_dispatch(std::string_view name)
 				result=value.complexity();if (!objects.select_clip(args[0],std::move(value))) throw uint32_t(8);
 			}
 		}
-	} catch (const ClipError &error) {if(error.error)environment.set_last_error(error.error);result=name=="GetClipRgn" || name=="GetLayout" ? UINT32_MAX : 0;}
-	catch (uint32_t error) {environment.set_last_error(error);result=name=="GetClipRgn" || name=="GetLayout" ? UINT32_MAX : 0;}
-	catch (const std::bad_alloc &) {environment.set_last_error(8);result=name=="GetClipRgn" || name=="GetLayout" ? UINT32_MAX : 0;}
+	} catch (const ClipError &error) {if(error.error)environment.set_last_error(error.error);result=name=="GetClipRgn" || name=="GetLayout" || name=="GetRandomRgn" ? UINT32_MAX : 0;}
+	catch (uint32_t error) {environment.set_last_error(error);result=name=="GetClipRgn" || name=="GetLayout" || name=="GetRandomRgn" ? UINT32_MAX : 0;}
+	catch (const std::bad_alloc &) {environment.set_last_error(8);result=name=="GetClipRgn" || name=="GetLayout" || name=="GetRandomRgn" ? UINT32_MAX : 0;}
 	process.return_api(result);return true;
 }
 
