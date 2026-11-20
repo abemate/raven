@@ -64,6 +64,8 @@ struct DesktopPalette {
 };
 
 struct DesktopFont {
+	// Set once a table other than 'name' was read: see GetFontData.
+	mutable bool tables_read = false;
 	std::array<uint8_t,92> definition{};
 	bool pending_delete = false;
 };

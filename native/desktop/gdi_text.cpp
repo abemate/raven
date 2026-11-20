@@ -948,12 +948,17 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			auto &dc = require_dc(call, 0);
 			const uint32_t tag = call.u32(1);
 			std::vector<uint8_t> table;
+			if (tag != 0x656d616eU)
+				selected_font(dc).tables_read = true;
 			if (tag == 0 || tag == 0x66637474U) {
 				bool collection = false;
 				table = objects.text().logical_file(selected_font(dc).definition, collection);
 				if (tag && !collection)
 					table.clear();
-			} else if (auto named = substitute_name_table(selected_font(dc).definition); tag == 0x656d616eU && !named.empty()) {
+			} else if (auto named = tag == 0x656d616eU && !selected_font(dc).tables_read ? substitute_name_table(selected_font(dc).definition) : std::vector<uint8_t>(); !named.empty()) {
+				// Only when the name is all that is asked of the font, as when a program builds its list of installed fonts. PDF-XChange finds
+				// the standard PDF fonts there by PostScript name, and without one spaces regular Times wrongly. A program taking the font's
+				// other tables is about to embed that file, whose name must stay its own: PDF-XChange otherwise garbles text it re-encodes.
 				table = std::move(named);
 			} else
 				table = objects.text().logical_table(selected_font(dc).definition, __builtin_bswap32(tag));

@@ -41,6 +41,21 @@ int raven_entry(void)
 	if (!check(dc,L"Arial",400,0,"ArialMT")) return 5;
 	if (!check(dc,L"Courier New",700,1,"CourierNewPS-BoldItalicMT")) return 6;
 	if (!check(dc,L"Liberation Serif",400,0,"LiberationSerif")) return 7;
+	/* A font whose other tables were read is being embedded, and keeps the file's own name. */
+	{
+		static BYTE table[8192], head[64];
+		LOGFONTW font={0};
+		font.lfHeight=-12; font.lfWeight=400; font.lfCharSet=DEFAULT_CHARSET;
+		lstrcpyW(font.lfFaceName,L"Times New Roman");
+		HFONT handle=CreateFontIndirectW(&font);
+		if (!handle) return 8;
+		HGDIOBJ old=SelectObject(dc,handle);
+		if (GetFontData(dc,'h'|'e'<<8|'a'<<16|'d'<<24,0,head,sizeof head)==GDI_ERROR) return 9;
+		DWORD size=GetFontData(dc,'n'|'a'<<8|'m'<<16|'e'<<24,0,table,sizeof table);
+		SelectObject(dc,old);
+		DeleteObject(handle);
+		if (size==GDI_ERROR || has(table,size,"TimesNewRomanPSMT") || !has(table,size,"LiberationSerif")) return 10;
+	}
 	DeleteDC(dc);
 	return 0;
 }
