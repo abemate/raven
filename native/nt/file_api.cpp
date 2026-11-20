@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
@@ -47,6 +48,28 @@ namespace {
 constexpr uint64_t invalid_handle = UINT64_MAX;
 constexpr uint32_t attribute_readonly = 0x1, attribute_hidden = 0x2, attribute_directory = 0x10, attribute_archive = 0x20,
 	attribute_normal = 0x80, attribute_reparse = 0x400;
+
+// Writes at the file pointer, or at an offset when one is given. On Windows a write to a disk that fills part way fails; a host write
+// answers with a short count first, which a caller checking only for success would take as all written. Pipes keep their partial counts.
+ssize_t write_regular(int descriptor, const uint8_t *data, size_t size, off_t offset)
+{
+	size_t done = 0;
+	for (;;) {
+		const ssize_t count = offset < 0 ? ::write(descriptor, data + done, size - done) : ::pwrite(descriptor, data + done, size - done, offset + off_t(done));
+		if (count < 0) {
+			if (errno == EINTR)
+				continue;
+			return done ? -1 : count;
+		}
+		done += size_t(count);
+		struct stat metadata{};
+		if (done == size || !count || ::fstat(descriptor, &metadata) || !S_ISREG(metadata.st_mode)) {
+			if (!count && done < size)
+				errno = ENOSPC;
+			return ssize_t(done);
+		}
+	}
+}
 
 uint64_t filetime(const timespec &time)
 {
@@ -402,15 +425,14 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		ssize_t count;
 		if (call[4]) {
 			const auto offset = call.load<uint64_t>(call[4] + 2 * call.pointer_width());
-			count = offset == UINT64_MAX ? ::write(file->descriptor, bytes.data(), bytes.size())
-				: ::pwrite(file->descriptor, bytes.data(), bytes.size(), off_t(offset));
+			count = write_regular(file->descriptor, bytes.data(), bytes.size(), offset == UINT64_MAX ? -1 : off_t(offset));
 			if (count >= 0 && offset != UINT64_MAX && !(file->flags & 0x40000000U))
 				::lseek(file->descriptor, off_t(offset + uint64_t(count)), SEEK_SET);
 		} else if (::isatty(file->descriptor)) {
 			count = TerminalConsole::instance().write_text(file->descriptor, std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size())) ?
 				ssize_t(bytes.size()) : -1;
 		} else {
-			do count = ::write(file->descriptor, bytes.data(), bytes.size()); while (count < 0 && errno == EINTR);
+			count = write_regular(file->descriptor, bytes.data(), bytes.size(), -1);
 		}
 		if (count < 0) {
 			call.fail(error_of(errno));
@@ -896,7 +918,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(file ? 5 : 6);
 			return;
 		}
-		::fsync(file->descriptor);
+		// A pipe or terminal has nothing to flush; a disk that could not keep the data must say so.
+		if (::fsync(file->descriptor) && errno != EINVAL && errno != EROFS) {
+			call.fail(error_of(errno));
+			return;
+		}
 		call.ret(1);
 	});
 	// Reparse points are the host's symbolic links. FSCTL_SET_REPARSE_POINT makes an empty directory a mount point (a junction) or
@@ -1499,39 +1525,91 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		}
 		struct stat metadata{};
 		::fstat(source, &metadata);
-		const int target = ::open(to.host.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, metadata.st_mode & 0777);
-		if (target < 0) {
+		// A copy over an existing file is written beside it and renamed over it only once it is complete and on disk: PDF-XChange saves by
+	// copying a finished temporary over the document, and a full disk, a crash or a power cut part way must leave the document as it was.
+	// A file with other hard links, or in a folder that takes no new file, is written in place as there is no way to swap it.
+	struct stat existing{};
+	std::string destination = to.host, scratch;
+	int target = -1;
+	if (to.exists && !::stat(to.host.c_str(), &existing) && S_ISREG(existing.st_mode) && existing.st_nlink == 1) {
+		if (::access(to.host.c_str(), W_OK)) {
 			const int error = errno;
 			::close(source);
-			call.fail(error_of(error, !to.parent_exists));
-			return;
-		}
-		std::vector<char> buffer(1 << 16);
-		bool good = true;
-		for (;;) {
-			const ssize_t count = ::read(source, buffer.data(), buffer.size());
-			if (count <= 0) {
-				good = count == 0;
-				break;
-			}
-			if (::write(target, buffer.data(), size_t(count)) != count) {
-				good = false;
-				break;
-			}
-		}
-		if (good) {
-			const timespec times[]{metadata.st_atim, metadata.st_mtim};
-			good = ::futimens(target, times) == 0;
-		}
-		const int error = errno;
-		::close(source);
-		::close(target);
-		if (!good) {
 			call.fail(error_of(error));
 			return;
 		}
-		call.ret(1);
-	};
+		if (char *real = ::realpath(to.host.c_str(), nullptr)) {
+			destination = real;
+			std::free(real);
+			scratch = destination.substr(0, destination.rfind('/') + 1) + ".raven-copy-XXXXXX";
+			target = ::mkostemp(scratch.data(), O_CLOEXEC);
+			if (target < 0)
+				scratch.clear();
+			else {
+				::fchmod(target, existing.st_mode & 07777);
+				if (::fchown(target, existing.st_uid, existing.st_gid)) {}
+			}
+		}
+	}
+	if (target < 0)
+		target = ::open(to.host.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, metadata.st_mode & 0777);
+	if (target < 0) {
+		const int error = errno;
+		::close(source);
+		call.fail(error_of(error, !to.parent_exists));
+		return;
+	}
+	std::vector<char> buffer(1 << 16);
+	bool good = true;
+	while (good) {
+		const ssize_t count = ::read(source, buffer.data(), buffer.size());
+		if (count <= 0) {
+			good = count == 0;
+			break;
+		}
+		// A disk that fills part way answers with a short count first and the error on the next write.
+		for (ssize_t done = 0; good && done < count;) {
+			const ssize_t written = ::write(target, buffer.data() + done, size_t(count - done));
+			if (written > 0)
+				done += written;
+			else if (written == 0) {
+				errno = ENOSPC;
+				good = false;
+			} else if (errno != EINTR)
+				good = false;
+		}
+	}
+	if (good) {
+		const timespec times[]{metadata.st_atim, metadata.st_mtim};
+		good = ::futimens(target, times) == 0;
+	}
+	if (good && !scratch.empty())
+		good = ::fsync(target) == 0;
+	int error = errno;
+	::close(source);
+	::close(target);
+	if (good && !scratch.empty()) {
+		good = ::rename(scratch.c_str(), destination.c_str()) == 0;
+		error = errno;
+	}
+	if (!good) {
+		// What was there stays; a partial copy does not, as on Windows.
+		if (!scratch.empty())
+			::unlink(scratch.c_str());
+		else if (!to.exists)
+			::unlink(to.host.c_str());
+		call.fail(error_of(error));
+		return;
+	}
+	if (!scratch.empty()) {
+		const int folder = ::open(destination.substr(0, destination.rfind('/') + 1).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		if (folder >= 0) {
+			::fsync(folder);
+			::close(folder);
+		}
+	}
+	call.ret(1);
+};
 	registry.add("CopyFileW", 3, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto from = resolve(call, call.wide(call[0]));
 		const auto to = from ? resolve(call, call.wide(call[1])) : std::nullopt;

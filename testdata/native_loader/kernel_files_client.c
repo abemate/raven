@@ -99,6 +99,26 @@ int raven_entry(void)
 	CHECK(42,GetFileAttributesExW(copy,GetFileExInfoStandard,&copied) &&
 		copied.ftLastWriteTime.dwLowDateTime==written.dwLowDateTime &&
 		copied.ftLastWriteTime.dwHighDateTime==written.dwHighDateTime);
+	/* A copy over a file replaces all of it, leaves nothing else behind and respects a read-only target; a file copied onto itself survives. */
+	{
+		WCHAR longer[MAX_PATH],scan[MAX_PATH];
+		static char big[70000];
+		DWORD count;
+		join(longer,work,L"longer.bin");
+		file=CreateFileW(longer,GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+		CHECK(90,file!=INVALID_HANDLE_VALUE && WriteFile(file,big,sizeof big,&count,0) && count==sizeof big && CloseHandle(file));
+		CHECK(91,CopyFileW(path,longer,FALSE));
+		CHECK(92,GetFileAttributesExW(longer,GetFileExInfoStandard,&copied) && copied.nFileSizeHigh==0);
+		const DWORD copied_size=copied.nFileSizeLow;
+		CHECK(93,GetFileAttributesExW(path,GetFileExInfoStandard,&copied) && copied.nFileSizeLow==copied_size && copied_size<sizeof big);
+		CHECK(94,CopyFileW(path,path,FALSE) && GetFileAttributesExW(path,GetFileExInfoStandard,&copied) && copied.nFileSizeLow==copied_size);
+		CHECK(96,SetFileAttributesW(longer,FILE_ATTRIBUTE_READONLY));
+		CHECK(97,!CopyFileW(path,longer,FALSE) && GetLastError()==ERROR_ACCESS_DENIED);
+		CHECK(98,SetFileAttributesW(longer,FILE_ATTRIBUTE_NORMAL) && DeleteFileW(longer));
+		join(scan,work,L".raven-copy-*");
+		WIN32_FIND_DATAW stray;
+		CHECK(99,FindFirstFileW(scan,&stray)==INVALID_HANDLE_VALUE);
+	}
 	join(moved,work,L"moved.txt");
 	CHECK(20,MoveFileExW(copy,moved,0));
 	CHECK(21,GetFileAttributesW(copy)==INVALID_FILE_ATTRIBUTES && GetLastError()==ERROR_FILE_NOT_FOUND);
