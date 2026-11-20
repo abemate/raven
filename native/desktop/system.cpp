@@ -211,6 +211,15 @@ void NativeWindows::reshape(uint64_t handle, DesktopRect outer)
 		send(handle, 3, 0, uint16_t(window->x) | (uint64_t(uint16_t(window->y)) << 16));
 }
 
+void NativeWindows::timers_full()
+{
+	static bool said = false;
+	if (said)
+		return;
+	said = true;
+	std::cerr << "raven: all " << timers.size() << " timers are in use; SetTimer now fails" << std::endl;
+}
+
 // Queues WM_TIMER for every expired timer; messages already waiting for the same timer are not duplicated.
 void NativeWindows::post_due_timers()
 {
@@ -376,9 +385,12 @@ bool NativeWindows::system_dispatch(std::string_view name)
 			} else if (!id) {
 				throw uint32_t(87);
 			}
-			if (timers.size() >= 1024)
-				throw uint32_t(8);
+			// Setting a timer that exists replaces it, so only a new one can find the table full.
 			std::erase_if(timers, [&](const Timer &timer) { return timer.window == args[0] && timer.id == id; });
+			if (timers.size() >= 1024) {
+				timers_full();
+				throw uint32_t(8);
+			}
 			timers.push_back({args[0], id, args[3], interval, std::chrono::steady_clock::now() + std::chrono::milliseconds(interval), false, environment.thread_id()});
 			if (std::getenv("RAVEN_TRACE_TIMERS"))
 				std::cerr << "timer set " << std::hex << args[0] << ' ' << id << std::dec << " every " << interval << " ms on thread " << environment.thread_id() << '\n';

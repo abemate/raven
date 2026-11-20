@@ -528,6 +528,8 @@ private:
 	std::vector<Timer> timers;
 	uint64_t next_timer_id=0x1000;
 	void post_due_timers();
+	// Says once in the log that the timer table is full: from then on the program cannot start a timer.
+	void timers_full();
 	// The previous client size, when the caller has already stored a provisional one, decides whether WM_SIZE is due.
 	// Children keep their place in the client area: when its origin moves they move with it. origin is where they were laid out against,
 	// the client origin before the call unless the caller already moved the window.

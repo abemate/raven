@@ -350,6 +350,7 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 		const auto interval = std::clamp<uint32_t>(call.u32(2), 10, 0x7fffffff);
 		std::erase_if(timers, [&](const Timer &timer) { return timer.window == call[0] && timer.id == call[1]; });
 		if (timers.size() >= 1024) {
+			timers_full();
 			call.fail(8);
 			return;
 		}

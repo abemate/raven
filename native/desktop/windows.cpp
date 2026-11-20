@@ -1623,6 +1623,9 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		const auto *type=objects.window_class(window->class_id);
 		const bool again=last_press.window==target && last_press.message==message && now-last_press.time<=500 &&
 			std::abs(int64_t(x)-last_press.x)<=2 && std::abs(int64_t(y)-last_press.y)<=2;
+		// What the program holds, against Raven's limits of 10000 objects (windows, GDI objects, menus and classes together) and 1024 timers.
+		if (input_trace_on())
+			fprintf(stderr,"input held: %zu objects, %zu windows, %zu timers\n",objects.count(),objects.window_handles().size(),timers.size());
 		if (input_trace_on())
 			fprintf(stderr,"input press %x on %llx class %s double clicks %d: last on %llx %x, %u ms and %lld,%lld px apart -> %s\n",message,
 				(unsigned long long)target,type ? type->name.c_str() : "?",type && (type->style & 8) ? 1 : 0,
@@ -2035,6 +2038,12 @@ bool NativeWindows::destroy(uint64_t handle)
 	}
 	release_surface(handle);
 	painted_frames.erase(handle);
+	// Its timers go with it, as DestroyWindow kills them on Windows. Kept, every window destroyed with a timer running took one of the
+	// 1024 slots for good, until no timer could start.
+	const auto timer_count=timers.size();
+	std::erase_if(timers,[&](const Timer &timer) { return timer.window==handle; });
+	if (std::getenv("RAVEN_TRACE_TIMERS") && timer_count!=timers.size())
+		fprintf(stderr,"timers of destroyed window %llx removed: %zu\n",(unsigned long long)handle,timer_count-timers.size());
 	// The window menu goes with its window.
 	if (const auto menu=system_menus.find(handle); menu!=system_menus.end()) {
 		if (objects.menu(menu->second)) objects.erase(menu->second);

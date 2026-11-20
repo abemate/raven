@@ -2,6 +2,7 @@
 #include "foreign_surface.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <stdexcept>
 
@@ -156,8 +157,16 @@ uint64_t DesktopObjects::add(Object object)
 		}
 	}
 	const auto size = object_size(object);
-	if (size > limit - used || objects.size()+classes.size() >= 10000 || next == UINT32_MAX)
+	if (size > limit - used || objects.size()+classes.size() >= 10000 || next == UINT32_MAX) {
+		// Said once: from here on windows, pens, brushes, bitmaps and menus fail to be made, which a program rarely reports.
+		static bool said = false;
+		if (!said) {
+			said = true;
+			fprintf(stderr, "raven: the object table is full (%zu objects, %zu classes, %zu bytes); new windows and GDI objects now fail\n",
+				objects.size(), classes.size(), used);
+		}
 		return 0;
+	}
 	uint64_t handle = 0;
 	if (std::holds_alternative<DesktopWindow>(object)) {
 		// A window handle is unique among the processes of the host: its number sits under the tag of this process.

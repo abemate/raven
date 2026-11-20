@@ -1422,6 +1422,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(maximized_origin_test maximized_origin_fixture raven-bootstrap)
             add_test(NAME native_maximized_origin COMMAND maximized_origin_test $<TARGET_FILE:raven-bootstrap> ${MAXIMIZED_ORIGIN_FIXTURE})
             set_tests_properties(native_maximized_origin PROPERTIES TIMEOUT 30)
+            set(DESTROYED_TIMERS_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/destroyed-timers.exe)
+            add_custom_command(OUTPUT ${DESTROYED_TIMERS_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${DESTROYED_TIMERS_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/destroyed_timers_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/destroyed_timers_client.c VERBATIM)
+            add_custom_target(destroyed_timers_fixture ALL DEPENDS ${DESTROYED_TIMERS_FIXTURE})
+            add_executable(destroyed_timers_test desktop/destroyed_timers_test.cpp)
+            target_link_libraries(destroyed_timers_test PRIVATE raven_cpu)
+            add_dependencies(destroyed_timers_test destroyed_timers_fixture raven-bootstrap)
+            add_test(NAME native_destroyed_timers COMMAND destroyed_timers_test $<TARGET_FILE:raven-bootstrap> ${DESTROYED_TIMERS_FIXTURE})
+            set_tests_properties(native_destroyed_timers PROPERTIES TIMEOUT 60)
             set(KEY_TIP_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/key-tip-client.exe)
             add_custom_command(OUTPUT ${KEY_TIP_FIXTURE}
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
