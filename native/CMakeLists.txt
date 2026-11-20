@@ -2838,6 +2838,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                             -o ${raw_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/raw_device_client.c -luser32 -lkernel32 -lgcc
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/raw_device_client.c VERBATIM)
                     list(APPEND RAW_DEVICE_CLIENTS ${raw_client})
+                    set(validate_region_client ${CMAKE_CURRENT_BINARY_DIR}/validate-region${width}.exe)
+                    add_custom_command(OUTPUT ${validate_region_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${validate_region_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/validate_region_client.c -lgdi32 -luser32 -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/validate_region_client.c VERBATIM)
+                    add_custom_target(validate_region_fixture_x${width} ALL DEPENDS ${validate_region_client})
+                    add_test(NAME native_validate_region_x${width} COMMAND raven --run-process --execution=native ${validate_region_client})
+                    set_tests_properties(native_validate_region_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/validate-region-prefix${width})
                     set(directory_client ${CMAKE_CURRENT_BINARY_DIR}/directory${width}.exe)
                     add_custom_command(OUTPUT ${directory_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector

@@ -385,6 +385,8 @@ public:
 	// Told the thread of a window that has just come to need painting, for a wait of that thread to look again.
 	std::function<void(uint32_t)> invalidated;
 	bool validate(uint64_t window,DesktopRect rect);
+	// Takes a region, in client coordinates, out of what the window has to repaint.
+	bool validate(uint64_t window,const DesktopRegion &region);
 	bool start_paint(uint64_t window);
 	void finish_paint(uint64_t window);
 	// A paint whose surface went away while it ran, as a window resized inside its own paint: the window is no longer painting.
