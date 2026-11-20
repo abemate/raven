@@ -2769,6 +2769,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         set_tests_properties(native_shared_wait_guards_x${width} PROPERTIES TIMEOUT 30
                             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/shared-wait-prefix${width};RAVEN_PARALLEL=1")
                     endif()
+                    set(color_directory_client ${CMAKE_CURRENT_BINARY_DIR}/color-directory${width}.exe)
+                    add_custom_command(OUTPUT ${color_directory_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${color_directory_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/color_directory_client.c -lmscms -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/color_directory_client.c VERBATIM)
+                    add_custom_target(color_directory_fixture_x${width} ALL DEPENDS ${color_directory_client})
+                    add_test(NAME native_color_directory_x${width} COMMAND raven --run-process --execution=native ${color_directory_client})
+                    set_tests_properties(native_color_directory_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/color-directory-prefix${width})
                     set(remote_client ${CMAKE_CURRENT_BINARY_DIR}/remote-process${width}.exe)
                     add_custom_command(OUTPUT ${remote_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
