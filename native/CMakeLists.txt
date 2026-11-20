@@ -2779,6 +2779,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_remote_process_x${width} COMMAND raven --run-process --execution=native --timeout-ms=45000 ${remote_client})
                     set_tests_properties(native_remote_process_x${width} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/remote-process-prefix${width})
+                    set(text_placement_client ${CMAKE_CURRENT_BINARY_DIR}/text-placement${width}.exe)
+                    add_custom_command(OUTPUT ${text_placement_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${text_placement_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/text_placement_client.c -lusp10 -lgdi32 -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/text_placement_client.c VERBATIM)
+                    add_custom_target(text_placement_fixture_x${width} ALL DEPENDS ${text_placement_client})
+                    add_test(NAME native_text_placement_x${width} COMMAND raven --run-process --execution=native ${text_placement_client})
+                    set_tests_properties(native_text_placement_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/text-placement-prefix${width})
                     set(token_client ${CMAKE_CURRENT_BINARY_DIR}/token${width}.exe)
                     add_custom_command(OUTPUT ${token_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
