@@ -896,14 +896,20 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// PROCESS_MEMORY_COUNTERS from the host's accounting of this process.
-	registry.add("GetProcessMemoryInfo", 3, [is_self](ApiCall &call) {
+	registry.add("GetProcessMemoryInfo", 3, [is_self, &context](ApiCall &call) {
 		if (!is_self(call[0]) || !call[1]) {
 			call.fail(call[1] ? 6 : 87);
 			return;
 		}
-		uint64_t pages = 0, resident = 0;
-		std::ifstream statm("/proc/self/statm");
-		statm >> pages >> resident;
+		// The guest's own process and the runtime serving it together. PDF-XChange trims its page cache by these figures: read from the
+		// runtime alone they stayed small however much the guest held, and the cache grew until the machine ran out.
+		const auto resident_of = [](const std::string &path) {
+			uint64_t pages = 0, resident = 0;
+			std::ifstream statm(path);
+			statm >> pages >> resident;
+			return resident;
+		};
+		const uint64_t resident = resident_of("/proc/self/statm") + resident_of("/proc/" + std::to_string(call.process.guest_pid()) + "/statm");
 		const size_t width = call.pointer_width(), size = width == 4 ? 40 : 72;
 		std::vector<uint8_t> counters(std::min<size_t>(call.u32(2), size));
 		if (counters.size() < size) {
@@ -912,7 +918,7 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		}
 		const uint32_t cb = uint32_t(size);
 		std::memcpy(counters.data(), &cb, 4);
-		const uint64_t working = resident * 4096, committed = pages * 4096;
+		const uint64_t working = resident * 4096, committed = std::max<uint64_t>(context.memory.committed(), working);
 		const auto put = [&](size_t index, uint64_t value) { std::memcpy(counters.data() + 8 + (width == 4 ? 0 : 0) + index * width, &value, width); };
 		put(0, working);
 		put(1, working);

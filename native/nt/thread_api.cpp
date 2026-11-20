@@ -160,7 +160,7 @@ public:
 class WorkObject : public KernelObject {
 public:
 	uint64_t callback = 0, parameter = 0;
-	std::vector<std::shared_ptr<GuestThread>> running;
+	std::vector<std::shared_ptr<PoolJob>> running;
 };
 
 // A private pool only bounds its threads; work items run on guest threads whichever pool they name.
@@ -182,7 +182,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 	auto &threads = context.threads;
 	auto &objects = context.objects;
 	// Thread handles are per object; one thread object per guest thread keeps handle identity stable.
-	auto handle_of = std::make_shared<std::map<uint32_t, std::shared_ptr<ThreadObject>>>();
+	// Weak: the map only keeps OpenThread on the same object as the handles already open; it must not keep an ended thread's record alive.
+	auto handle_of = std::make_shared<std::map<uint32_t, std::weak_ptr<ThreadObject>>>();
 	const auto thread_from = [&threads, &objects](uint64_t handle) -> std::shared_ptr<GuestThread> {
 		if (handle == current_thread_pseudo || handle == 0xfffffffeULL)
 			return threads.find(threads.current_id());
@@ -560,6 +561,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(8);
 			return;
 		}
+		if (handle_of->size() > 1024)
+			std::erase_if(*handle_of, [](const auto &entry) { return entry.second.expired(); });
 		(*handle_of)[thread->id] = object;
 		if (call[5]) call.store<uint32_t>(call[5], thread->id);
 		call.ret(made.value);
@@ -1004,9 +1007,11 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
-		auto &object = (*handle_of)[thread->id];
-		if (!object)
+		auto object = (*handle_of)[thread->id].lock();
+		if (!object) {
 			object = std::make_shared<ThreadObject>(thread);
+			(*handle_of)[thread->id] = object;
+		}
 		const auto made = objects.add_object(object);
 		if (!made.status) {
 			objects.set_access(made.value, thread_access(call.u32(0)));
@@ -1045,10 +1050,11 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				call.ret(0xc0000022U);
 				return;
 			}
-			auto &object = (*handle_of)[thread->id];
-			if (!object)
+			auto object = (*handle_of)[thread->id].lock();
+			if (!object) {
 				object = std::make_shared<ThreadObject>(thread);
-			const auto made = objects.add_object(object);
+				(*handle_of)[thread->id] = object;
+			}			const auto made = objects.add_object(object);
 			if (!made.status) {
 				objects.set_access(made.value, thread_access(call.u32(1)));
 				objects.set_inherit(made.value, (attributes & 2) != 0);
@@ -1447,7 +1453,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 	});
 
 
-	// Thread pool work items run on short-lived guest threads; waiting on them joins those threads.
+	// Thread pool work items run on the threads NativeThreads::submit keeps; waiting on them waits for their callbacks.
 	registry.add("CreateThreadpoolWork", 3, [&objects](ApiCall &call) {
 		auto work = std::make_shared<WorkObject>();
 		work->callback = call[0];
@@ -1459,22 +1465,23 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			if (const auto group = objects.object_as<CleanupGroupObject>(call.load_pointer(call[2] + 2 * call.pointer_width())))
 				group->members.push_back(made.value);
 	});
-	registry.add("SubmitThreadpoolWork", 1, [&objects, &threads, &context](ApiCall &call) {
+	registry.add("SubmitThreadpoolWork", 1, [&objects, &threads, &context, callback_instance = std::make_shared<uint64_t>(0)](ApiCall &call) {
 		const auto work = objects.object_as<WorkObject>(call[0]);
 		if (!work)
 			return;
-		// TP_CALLBACK_INSTANCE is opaque to callbacks; the work handle itself stands in for it.
-		const auto instance = context.allocator.allocate(64);
-		const auto thread = threads.create(work->callback, work->parameter, 1024 * 1024, false);
-		thread->arguments = {instance, work->parameter, call[0]};
-		work->running.push_back(thread);
+		// TP_CALLBACK_INSTANCE is opaque to callbacks and nothing here reads it: one block serves them all.
+		auto &instance = *callback_instance;
+		if (!instance)
+			instance = context.allocator.allocate(64);
+		std::erase_if(work->running, [](const auto &job) { return job->done; });
+		work->running.push_back(threads.submit(work->callback, {instance, work->parameter, call[0]}));
 	});
 	registry.add("WaitForThreadpoolWorkCallbacks", 2, [&objects, &threads](ApiCall &call) {
 		const auto work = objects.object_as<WorkObject>(call[0]);
 		if (!work)
 			return;
 		threads.block([work] {
-			return std::all_of(work->running.begin(), work->running.end(), [](const auto &thread) { return thread->state == GuestThread::State::done; });
+			return std::all_of(work->running.begin(), work->running.end(), [](const auto &job) { return job->done; });
 		}, std::nullopt);
 	});
 	registry.add("CloseThreadpoolWork", 1, [&objects](ApiCall &call) { objects.close(call[0]); });
@@ -1517,7 +1524,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				works.push_back(work);
 		threads.block([works] {
 			return std::all_of(works.begin(), works.end(), [](const auto &work) {
-				return std::all_of(work->running.begin(), work->running.end(), [](const auto &thread) { return thread->state == GuestThread::State::done; });
+				return std::all_of(work->running.begin(), work->running.end(), [](const auto &job) { return job->done; });
 			});
 		}, std::nullopt);
 		for (const auto member : group->members)

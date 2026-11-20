@@ -1,6 +1,7 @@
 #include "environment.h"
 #include "nls.h"
 
+#include <cstring>
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -236,6 +237,12 @@ void NativeEnvironment::release_thread_block(uint64_t teb)
 	if (teb == thread_block)
 		throw std::runtime_error("the current native thread block cannot be released");
 	thread_ids.erase(teb);
+	// The fiber-local values, which the first FlsSetValue of the thread mapped.
+	const auto stored = process.read_memory(teb + 0x17c8, 8);
+	uint64_t values = 0;
+	std::memcpy(&values, stored.data(), sizeof values);
+	if (values)
+		process.unmap_memory(values);
 	process.unmap_memory(teb);
 }
 

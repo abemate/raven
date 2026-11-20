@@ -6,11 +6,13 @@
 #include "security_attributes.h"
 #include "text.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <string>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -182,6 +184,36 @@ int open_named_section(const std::u16string &name, uint64_t size, bool create, b
 
 }
 
+namespace {
+
+struct HostMemory {
+	uint64_t total = 16ULL << 30, available = 8ULL << 30, swap_total = 16ULL << 30, swap_free = 16ULL << 30;
+	uint32_t load() const { return total ? uint32_t((total - std::min(available, total)) * 100 / total) : 0; }
+};
+
+HostMemory host_memory()
+{
+	HostMemory result;
+	std::ifstream file("/proc/meminfo");
+	std::string key;
+	uint64_t value = 0;
+	std::string unit;
+	bool found_total = false, found_available = false;
+	HostMemory read;
+	read.swap_total = read.swap_free = 0;
+	while (file >> key >> value) {
+		std::getline(file, unit);
+		const uint64_t bytes = value * 1024;
+		if (key == "MemTotal:") { read.total = bytes; found_total = true; }
+		else if (key == "MemAvailable:") { read.available = bytes; found_available = true; }
+		else if (key == "SwapTotal:") read.swap_total = bytes;
+		else if (key == "SwapFree:") read.swap_free = bytes;
+	}
+	return found_total && found_available ? read : result;
+}
+
+}
+
 void register_memory_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &allocator = context.allocator;
@@ -286,12 +318,15 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("LocalReAlloc", 3, resize_block);
 	registry.add("GlobalReAlloc", 3, resize_block);
-	registry.add("GlobalMemoryStatusEx", 1, [](ApiCall &call) {
+	registry.add("GlobalMemoryStatusEx", 1, [&memory](ApiCall &call) {
 		std::vector<uint8_t> bytes(64);
-		const uint32_t length = 64, load = 20;
+		const auto host = host_memory();
+		const uint32_t length = 64, load = host.load();
 		std::memcpy(bytes.data(), &length, 4);
 		std::memcpy(bytes.data() + 4, &load, 4);
-		const uint64_t values[] = {16ULL << 30, 8ULL << 30, 32ULL << 30, 16ULL << 30, 0x7fffffe0000ULL, 0x7fffff00000ULL, 0};
+		// The caches of PDF-XChange size themselves from these figures, so they have to be the real ones.
+		const uint64_t values[] = {host.total, host.available, host.total + host.swap_total, host.available + host.swap_free,
+			0x7fffffe0000ULL, 0x7fffffe0000ULL - std::min<uint64_t>(memory.committed(), 0x7fffffe0000ULL), 0};
 		std::memcpy(bytes.data() + 8, values, 56);
 		call.write(call[0], bytes);
 		call.ret(1);
@@ -321,10 +356,11 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GlobalMemoryStatus", 1, [](ApiCall &call) {
 		const size_t width = call.pointer_width();
 		const uint64_t cap = width == 4 ? 0xffffffffULL : UINT64_MAX;
-		const uint64_t values[] = {16ULL << 30, 8ULL << 30, 32ULL << 30, 16ULL << 30,
+		const auto host = host_memory();
+		const uint64_t values[] = {host.total, host.available, host.total + host.swap_total, host.available + host.swap_free,
 			width == 4 ? 0x7ffe0000ULL : 0x7fffffe0000ULL, width == 4 ? 0x7fe00000ULL : 0x7fffff00000ULL};
 		std::vector<uint8_t> bytes(8 + 6 * width);
-		const uint32_t length = uint32_t(bytes.size()), load = 20;
+		const uint32_t length = uint32_t(bytes.size()), load = host.load();
 		std::memcpy(bytes.data(), &length, 4);
 		std::memcpy(bytes.data() + 4, &load, 4);
 		for (size_t index = 0; index < 6; ++index) {

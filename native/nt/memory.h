@@ -38,6 +38,8 @@ public:
 	static std::span<const std::string_view> nt_exports();
 	// The address space held by reservations; commitment is counted separately and is what the limit applies to.
 	size_t bytes() const { return reserved_total; }
+	// Bytes committed, the charge Windows reports as a process's private usage.
+	size_t committed() const { return used; }
 	size_t count() const { return regions.size(); }
 	// Where in the served block the open ranges and the guest's commit log sit, as byte offsets, and how many entries each holds: the
 	// ranges a count and then start and end pairs, the log a 32-bit count and then the start and end of each read-write commit, or of

@@ -1572,6 +1572,11 @@ NativeThreadState NativeProcess::new_thread(uint64_t stack_top, uint64_t teb)
 	return thread;
 }
 
+pid_t NativeProcess::guest_pid() const
+{
+	return state->child->pid;
+}
+
 bool NativeProcess::parallel() const
 {
 	return state->child->execution_descriptor() >= 0;

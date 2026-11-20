@@ -2006,6 +2006,37 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	};
 	bind("Tls", tls, false);
 	bind("Fls", fls, true);
+	// What a thread stored with a callback is handed to it when the thread ends. The C runtime and PDF-XChange free their per-thread memory
+	// here. The array is the record: the guest-side FlsSetValue writes only there.
+	context.threads.set_ending([&context, fls] {
+		auto &process = context.process;
+		const auto load = [&process](uint64_t address) {
+			const auto bytes = process.read_memory(address, 8);
+			uint64_t value = 0;
+			std::memcpy(&value, bytes.data(), sizeof value);
+			return value;
+		};
+		const auto array = load(context.environment.teb() + 0x17c8);
+		if (!array)
+			return;
+		for (size_t index = 0; index < fls->used.size(); ++index) {
+			if (!fls->used[index] || !fls->callbacks[index])
+				continue;
+			const auto value = load(array + index * 8);
+			if (!value)
+				continue;
+			const uint64_t zero = 0;
+			process.write_memory(array + index * 8, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 8));
+			const uint64_t arguments[] = {value};
+			if (const auto result = context.call(fls->callbacks[index], arguments); result.stop != NativeStop::returned)
+				throw result;
+		}
+	});
+	// A thread's values go when it does: thread ids are never reused, so nothing could read them again.
+	context.threads.add_release_listener([tls, fls](uint32_t thread) {
+		tls->values.erase(thread);
+		fls->values.erase(thread);
+	});
 	(void)process;
 }
 

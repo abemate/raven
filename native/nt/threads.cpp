@@ -25,7 +25,14 @@ namespace {
 
 // A guest thread runs its API handlers on this stack, drivers included: shader compilation needs far more than a megabyte.
 constexpr size_t host_stack_size = 16 * 1024 * 1024;
+// Idle thread pool threads kept for the next callback; a burst beyond this ends its extra threads when it is over.
+constexpr std::ptrdiff_t max_idle_pool_threads = 32;
 
+}
+
+void GuestThread::HostStackRelease::operator()(char *stack) const
+{
+	::munmap(stack, host_stack_size);
 }
 
 NativeThreads::NativeThreads(NativeProcess &process, NativeEnvironment &environment, NativeMemory &memory, NativeTLS *tls,
@@ -115,6 +122,11 @@ std::shared_ptr<GuestThread> NativeThreads::create(uint64_t start, uint64_t para
 	if (live() >= 256)
 		throw std::runtime_error("native guest thread limit reached");
 	auto thread = std::make_shared<GuestThread>();
+	// Reserved, not committed: only the pages a handler reaches are ever backed, and unmapping returns them all when the thread ends.
+	void *host_stack = ::mmap(nullptr, host_stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+	if (host_stack == MAP_FAILED)
+		throw std::runtime_error("native guest thread stack allocation failed");
+	thread->host_stack.reset(static_cast<char *>(host_stack));
 	const uint64_t size = std::clamp<uint64_t>((stack_size + 0xffff) & ~uint64_t(0xffff), 256 * 1024, 64 * 1024 * 1024);
 	// The stack is reserved, as Windows reserves a thread's stack, and only its top is committed: Windows commits more as the thread
 	// reaches its guard page, so a new thread is charged for what it starts with, not its whole reservation (a thread pool of one
@@ -144,8 +156,6 @@ std::shared_ptr<GuestThread> NativeThreads::create(uint64_t start, uint64_t para
 	thread->parameter = parameter;
 	thread->snapshot = process.new_thread(thread->stack_high - 64, thread->teb);
 	thread->suspend_count = suspended ? 1 : 0;
-	// Left uninitialised, so only the pages a handler reaches are ever backed.
-	thread->host_stack = std::make_unique_for_overwrite<char[]>(host_stack_size);
 	getcontext(&thread->context);
 	thread->context.uc_stack.ss_sp = thread->host_stack.get();
 	thread->context.uc_stack.ss_size = host_stack_size;
@@ -180,10 +190,33 @@ void NativeThreads::thread_main(GuestThread &thread)
 		if (result.stop != NativeStop::returned)
 			throw result;
 		code = uint32_t(result.value);
-		if (notifier)
-			notifier(3);
+		// As on Windows, pool threads outlive their callbacks. Programs keep per-thread caches that are built once per thread, so a thread per
+		// callback would build them again for every callback: PDF-XChange's are 256 KB and it runs thousands of callbacks an hour.
+		while (thread.pooled) {
+			complete_job(thread);
+			if (std::count_if(threads.begin(), threads.end(), [](const auto &other) { return other->pool_idle; }) >= max_idle_pool_threads)
+				break;
+			thread.pool_idle = true;
+			block([&thread] { return thread.job != nullptr; }, std::nullopt);
+			const auto next = run(thread.start, thread.arguments);
+			if (next.stop != NativeStop::returned)
+				throw next;
+			code = uint32_t(next.value);
+		}
+		end_thread(thread);
 	} catch (const ThreadExit &exit) {
 		code = exit.code;
+		// ExitThread leaves as a return does: the C runtime ends every thread it starts this way.
+		if (!thread.unwinding && !tearing_down) {
+			try {
+				end_thread(thread);
+			} catch (const ThreadExit &) {
+				// A callback that exits the thread again has nothing left to skip.
+			} catch (...) {
+				if (!pending)
+					pending = std::current_exception();
+			}
+		}
 	} catch (...) {
 		if (!pending)
 			pending = std::current_exception();
@@ -229,6 +262,39 @@ void NativeThreads::thread_main(GuestThread &thread)
 	}
 }
 
+void NativeThreads::complete_job(GuestThread &thread)
+{
+	if (thread.job)
+		thread.job->done = true;
+	thread.job.reset();
+}
+
+std::shared_ptr<PoolJob> NativeThreads::submit(uint64_t start, std::vector<uint64_t> arguments)
+{
+	auto job = std::make_shared<PoolJob>();
+	for (const auto &thread : threads)
+		if (thread->pool_idle && thread->state != GuestThread::State::done) {
+			thread->pool_idle = false;
+			thread->start = start;
+			thread->arguments = std::move(arguments);
+			thread->job = job;
+			return job;
+		}
+	const auto thread = create(start, 0, 1024 * 1024, false);
+	thread->arguments = std::move(arguments);
+	thread->pooled = true;
+	thread->job = job;
+	return job;
+}
+
+void NativeThreads::end_thread(GuestThread &)
+{
+	if (thread_ending)
+		thread_ending();
+	if (notifier)
+		notifier(3);
+}
+
 void NativeThreads::finish(GuestThread &thread, uint32_t code)
 {
 	if (&thread != running) {
@@ -237,6 +303,8 @@ void NativeThreads::finish(GuestThread &thread, uint32_t code)
 	}
 	thread.exit_code = code;
 	thread.state = GuestThread::State::done;
+	thread.pool_idle = false;
+	complete_job(thread);
 	thread.impersonation.reset();
 	thread.ready = nullptr;
 	for (const int report : thread.exit_reports) {
@@ -309,8 +377,15 @@ void NativeThreads::reap()
 	for (auto &thread : threads)
 		if (thread->state == GuestThread::State::done && thread.get() != running && thread->host_stack) {
 			thread->host_stack.reset();
+			for (const auto &listener : release_listeners)
+				listener(thread->id);
 			release_resources(*thread);
 		}
+	// A program can start thousands of short-lived threads in a day, and the scheduler walks this list on every switch. A handle to an
+	// ended thread keeps its record through the thread object.
+	std::erase_if(threads, [this](const auto &thread) {
+		return thread->state == GuestThread::State::done && thread.get() != running && !thread->main && !thread->host_stack;
+	});
 }
 
 std::shared_ptr<GuestThread> NativeThreads::pick(bool include_current)

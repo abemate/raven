@@ -131,6 +131,8 @@ public:
 	// A thread that has not started: no active call, its own stack ceiling and TEB (x64 GS base).
 	NativeThreadState new_thread(uint64_t stack_top, uint64_t teb);
 	bool parallel() const;
+	// The host process the guest runs in, whose /proc entry describes the guest's memory.
+	pid_t guest_pid() const;
 	bool stopped() const;
 	int execution_descriptor() const;
 	void drain_execution();

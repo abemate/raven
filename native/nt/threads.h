@@ -21,6 +21,11 @@ namespace raven {
 class AccessToken;
 
 // A Windows thread: guest registers and stack, plus the host coroutine that runs its API handlers.
+// One callback handed to the thread pool; `done` is set when it has returned.
+struct PoolJob {
+	bool done = false;
+};
+
 struct GuestThread {
 	enum class State { ready, running, waiting, done };
 	uint32_t id = 0;
@@ -28,7 +33,9 @@ struct GuestThread {
 	State state = State::ready;
 	NativeThreadState snapshot;
 	ucontext_t context{};
-	std::unique_ptr<char[]> host_stack;
+	// Mapped on its own: the C library would place a block this size in the heap, where the pages a thread touched stay charged after it ends.
+	struct HostStackRelease { void operator()(char *stack) const; };
+	std::unique_ptr<char[], HostStackRelease> host_stack;
 	// Wait condition: pure check, evaluated by the scheduler; the thread resumes when it holds or the wake time passes.
 	std::function<bool()> ready;
 	std::optional<std::chrono::steady_clock::time_point> wake;
@@ -41,6 +48,9 @@ struct GuestThread {
 	// Extra start arguments for entry points that take more than one (thread pool callbacks); empty means just the parameter.
 	std::vector<uint64_t> arguments;
 	bool main = false;
+	// A thread pool thread: it stays after its callback and takes the next one. `job` is the callback it runs or was just given.
+	bool pooled = false, pool_idle = false;
+	std::shared_ptr<PoolJob> job;
 	// Set when the process is ending: the thread leaves through its host frames the next time it runs, so nothing they hold outlives it.
 	bool unwinding = false;
 	struct Apc {
@@ -107,6 +117,12 @@ public:
 		block_made = std::move(made);
 		block_released = std::move(released);
 	}
+	// Runs a callback on an idle thread pool thread, or on a new one if all are busy.
+	std::shared_ptr<PoolJob> submit(uint64_t start, std::vector<uint64_t> arguments);
+	// Called on a thread that is ending by itself, before its detach notifications: fiber-local storage callbacks.
+	void set_ending(std::function<void()> ending) { thread_ending = std::move(ending); }
+	// Called with the id of a thread whose resources are being released, so per-thread records can go with it.
+	void add_release_listener(std::function<void(uint32_t)> listener) { release_listeners.push_back(std::move(listener)); }
 	// Host polling used while every guest thread waits; it may make waiting predicates true (window events).
 	void set_idle(std::function<void(std::chrono::milliseconds)> idle) { poll = std::move(idle); }
 	// Adds the descriptors whose readiness can make a waiting thread's condition true; the idle wait sleeps on them.
@@ -157,6 +173,8 @@ private:
 	std::function<NativeResult(uint64_t, std::span<const uint64_t>)> run;
 	std::function<void(uint32_t)> notifier;
 	std::function<void(uint64_t)> block_made, block_released;
+	std::vector<std::function<void(uint32_t)>> release_listeners;
+	std::function<void()> thread_ending;
 	std::function<void(std::chrono::milliseconds)> poll;
 	std::vector<std::function<bool()>> externals;
 	std::vector<std::function<void()>> pumps;
@@ -180,6 +198,8 @@ private:
 	void finish(GuestThread &thread, uint32_t code);
 	static void trampoline(unsigned low, unsigned high);
 	void thread_main(GuestThread &thread);
+	void end_thread(GuestThread &thread);
+	void complete_job(GuestThread &thread);
 	void release_resources(GuestThread &thread);
 	void check_pending();
 };
