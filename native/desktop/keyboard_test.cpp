@@ -36,6 +36,23 @@ int main()
 			keyboard.modifiers(1U<<control,0,0,0);
 			check(keyboard.decode(34).character==7 && keyboard.mouse_modifiers()==8,"control translation differs");
 			keyboard.modifiers(0,0,0,0);
+			// Without Num Lock the keypad moves the caret, as the keys it stands for do, but with its own scan code and not as an extended key.
+			const uint32_t pad[]{79,80,81,75,77,71,72,73,82,83,76},moving[]{0x23,0x28,0x22,0x25,0x27,0x24,0x26,0x21,0x2d,0x2e,0x0c};
+			for (size_t i=0;i<std::size(pad);++i) {
+				const auto key=keyboard.decode(pad[i]);
+				check(key.code==moving[i] && key.scan==pad[i] && !key.character && !key.extended,"keypad without Num Lock differs");
+			}
+			const auto num=xkb_keymap_mod_get_index(map,XKB_MOD_NAME_NUM);
+			check(num<32,"reference Num Lock index exceeds ABI");
+			keyboard.modifiers(0,0,1U<<num,0);
+			const uint32_t digits[]{82,79,80,81,75,76,77,71,72,73};
+			for (uint32_t i=0;i<10;++i) {
+				const auto key=keyboard.decode(digits[i]);
+				check(key.code==0x60+i && key.scan==digits[i] && key.character=='0'+i && !key.extended,"keypad digit differs");
+			}
+			const auto decimal=keyboard.decode(83);
+			check(decimal.code==0x6e && decimal.character==(layout[0]=='u' ? '.' : ',') && !decimal.extended,"keypad decimal differs");
+			keyboard.modifiers(0,0,0,0);
 			bool rejected=false;
 			try { keyboard.load("invalid keymap"); } catch (const std::runtime_error &) { rejected=true; }
 			check(rejected && keyboard.decode(34).character=='g',"failed keymap reload damaged state");

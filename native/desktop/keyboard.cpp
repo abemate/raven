@@ -110,7 +110,9 @@ KeyboardKey KeyboardMap::decode(uint32_t code) const
 	// known by the first, as Windows layouts give each key one.
 	if (xkb_keymap_key_get_syms_by_level(state->map,code+8,layout,0,&symbols)<1)
 		return KeyboardKey{0,code<=127 ? code : 0,0,false};
-	const auto symbol=symbols[0];
+	auto symbol=symbols[0];
+	// A keypad key means what Num Lock makes it now: its first symbol is only the one it has with Num Lock off.
+	if (symbol>=XKB_KEY_KP_Space && symbol<=XKB_KEY_KP_9) symbol=xkb_state_key_get_one_sym(state->keys,code+8);
 	KeyboardKey key{0,code,xkb_state_key_get_utf32(state->keys,code+8),false};
 	const auto *name=xkb_keymap_key_get_name(state->map,code+8);
 	if (!name) throw std::runtime_error("keyboard key has no physical name");
@@ -179,6 +181,19 @@ KeyboardKey KeyboardMap::decode(uint32_t code) const
 		case XKB_KEY_apostrophe: key.code=0xde; break;
 		case XKB_KEY_less: key.code=0xe2; break;
 		case XKB_KEY_KP_Enter: key.code=13; key.scan=28; key.extended=true; break;
+		// The keypad with Num Lock off moves the caret as these keys do, but keeps its own scan code and is not an extended key.
+		case XKB_KEY_KP_Home: key.code=0x24; break;
+		case XKB_KEY_KP_Left: key.code=0x25; break;
+		case XKB_KEY_KP_Up: key.code=0x26; break;
+		case XKB_KEY_KP_Right: key.code=0x27; break;
+		case XKB_KEY_KP_Down: key.code=0x28; break;
+		case XKB_KEY_KP_Page_Up: key.code=0x21; break;
+		case XKB_KEY_KP_Page_Down: key.code=0x22; break;
+		case XKB_KEY_KP_End: key.code=0x23; break;
+		case XKB_KEY_KP_Begin: key.code=0x0c; break;
+		case XKB_KEY_KP_Insert: key.code=0x2d; break;
+		case XKB_KEY_KP_Delete: key.code=0x2e; break;
+		case XKB_KEY_KP_Separator: key.code=0x6e; break;
 		case XKB_KEY_KP_Multiply: key.code=0x6a; break;
 		case XKB_KEY_KP_Add: key.code=0x6b; break;
 		case XKB_KEY_KP_Subtract: key.code=0x6d; break;
