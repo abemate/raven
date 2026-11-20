@@ -206,6 +206,8 @@ private:
 	uint64_t posts_stamp=UINT64_MAX,sends_stamp=UINT64_MAX;
 	void import_foreign_posts();
 	void answer_foreign_sends();
+	// The process AllowSetForegroundWindow named last and has not yet been handed this launch's permission to come forward; 0 for none.
+	uint32_t foreground_allowed=0;
 	// A message to a window of another process: the owner's answer, or nothing when it gave none in time.
 	std::optional<uint64_t> send_foreign(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,std::chrono::milliseconds timeout);
 	void import_foreign_frames();

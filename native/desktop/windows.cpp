@@ -976,6 +976,10 @@ void NativeWindows::answer_foreign_sends()
 	take_foreign_sends([this](uint64_t window) { return std::as_const(objects).window(window)!=nullptr; },
 		[this](uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,const std::vector<uint8_t> &data) -> uint64_t {
 			if (!std::as_const(objects).window(window)) return 0;
+			if (message==foreign_activate_message) {
+				if (presentation.activate) presentation.activate(objects.window_root(window),std::string(data.begin(),data.end()));
+				return 1;
+			}
 			if (message!=0x4a) return send(window,message,wparam,lparam);
 			// WM_COPYDATA: the bytes and a COPYDATASTRUCT that points at them live in this process while the window reads them.
 			const bool narrow=process.mode()==NativeMode::x86;
@@ -1017,6 +1021,15 @@ std::optional<uint64_t> NativeWindows::send_foreign(uint64_t window,uint32_t mes
 		if (size>(64U<<20) || (size && !pointer)) throw uint32_t(87);
 		if (size) data=process.read_memory(pointer,size);
 		lparam=value;
+		// A launch handing its work to the running copy lets that copy come forward (AllowSetForegroundWindow). On Wayland the permission
+		// is the token the desktop gave this launch, which only the window's own process can present.
+		const auto owner=foreign_window_owner(window);
+		if (foreground_allowed && owner && (foreground_allowed==UINT32_MAX || foreground_allowed==*owner)) {
+			foreground_allowed=0;
+			const char *token=std::getenv("XDG_ACTIVATION_TOKEN");
+			const std::string text=token ? token : "";
+			send_foreign_message(window,foreign_activate_message,0,0,std::vector<uint8_t>(text.begin(),text.end()),std::chrono::seconds(2));
+		}
 	}
 	return send_foreign_message(window,message,wparam,lparam,data,timeout);
 }

@@ -9,6 +9,9 @@
 #ifdef RAVEN_WAYLAND_VIEWPORTER
 #include "viewporter-client-protocol.h"
 #endif
+#ifdef RAVEN_WAYLAND_ACTIVATION
+#include "xdg-activation-v1-client-protocol.h"
+#endif
 
 #include <wayland-client.h>
 #include <algorithm>
@@ -162,6 +165,9 @@ struct WaylandPresentation::State {
 #ifdef RAVEN_WAYLAND_CURSOR_SHAPE
 	wp_cursor_shape_manager_v1 *shape_manager=nullptr;
 	wp_cursor_shape_device_v1 *shape_device=nullptr;
+#endif
+#ifdef RAVEN_WAYLAND_ACTIVATION
+	xdg_activation_v1 *activation=nullptr;
 #endif
 	// The cursor the program shows and the serial of the pointer's arrival on one of its surfaces, which setting the cursor quotes.
 	uint32_t cursor=32512,enter_serial=0;
@@ -783,6 +789,10 @@ struct WaylandPresentation::State {
 			state.watch_cursor_shape();
 		}
 #endif
+#ifdef RAVEN_WAYLAND_ACTIVATION
+		else if (!std::strcmp(interface,"xdg_activation_v1"))
+			state.activation=static_cast<xdg_activation_v1 *>(wl_registry_bind(registry,name,&xdg_activation_v1_interface,1));
+#endif
 		else if (!std::strcmp(interface,"zwp_pointer_constraints_v1"))
 			state.constraints=static_cast<zwp_pointer_constraints_v1 *>(wl_registry_bind(registry,name,&zwp_pointer_constraints_v1_interface,1));
 		else if (!std::strcmp(interface,"xdg_wm_base")) {
@@ -1237,6 +1247,36 @@ struct WaylandPresentation::State {
 			wl_surface_commit(window.proxy);
 		}
 	}
+
+#ifdef RAVEN_WAYLAND_ACTIVATION
+	struct TokenRequest { State *state; uint64_t handle; };
+
+	void activate(uint64_t handle,const std::string &token) {
+		const auto found=surfaces.find(handle);
+		if (!activation || found==surfaces.end()) return;
+		if (!token.empty()) {
+			xdg_activation_v1_activate(activation,token.c_str(),found->second->proxy);
+			wl_display_flush(display);
+			return;
+		}
+		// No permission came with the launch: a token the window asks for itself, which the desktop may honour only with a mark on the taskbar.
+		static const xdg_activation_token_v1_listener listener{[](void *data,xdg_activation_token_v1 *request,const char *granted) {
+			const std::unique_ptr<TokenRequest> asked(static_cast<TokenRequest *>(data));
+			xdg_activation_token_v1_destroy(request);
+			const auto window=asked->state->surfaces.find(asked->handle);
+			if (window==asked->state->surfaces.end()) return;
+			xdg_activation_v1_activate(asked->state->activation,granted,window->second->proxy);
+			wl_display_flush(asked->state->display);
+		}};
+		auto *request=xdg_activation_v1_get_activation_token(activation);
+		xdg_activation_token_v1_add_listener(request,&listener,new TokenRequest{this,handle});
+		xdg_activation_token_v1_set_surface(request,found->second->proxy);
+		xdg_activation_token_v1_commit(request);
+		wl_display_flush(display);
+	}
+#else
+	void activate(uint64_t,const std::string &) {}
+#endif
 };
 
 WaylandPresentation::WaylandPresentation() : state(std::make_unique<State>()) {}
@@ -1360,6 +1400,7 @@ DesktopPresentation WaylandPresentation::make_callbacks()
 		state->overlay(handle,window,x,y,width,height,pixels,stride);
 	}};
 	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
+	result.activate=[this](uint64_t handle,const std::string &token) { state->activate(handle,token); };
 	return result;
 }
 

@@ -49,6 +49,8 @@ void take_foreign_messages(const std::function<bool(uint64_t)> &owned, const std
 // most `timeout`; nothing when the time ran out or the owner ended first.
 std::optional<uint64_t> send_foreign_message(uint64_t window, uint32_t message, uint64_t wparam, uint64_t lparam, const std::vector<uint8_t> &data,
 	std::chrono::milliseconds timeout);
+// Raven's own message between processes, outside the numbers programs use: come forward, its bytes being the desktop's activation token.
+inline constexpr uint32_t foreign_activate_message=0x7f410001;
 // Owner side: answers every message sent to a window `owned` accepts with what `use` returns.
 void take_foreign_sends(const std::function<bool(uint64_t)> &owned,
 	const std::function<uint64_t(uint64_t, uint32_t, uint64_t, uint64_t, const std::vector<uint8_t> &)> &use);

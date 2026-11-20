@@ -107,6 +107,9 @@ struct DesktopPresentation {
 	std::function<bool(std::string_view uris)> drag_out;
 	// How that drag went: 0 while it goes on, 1 dropped on a client that takes the files, 2 cancelled or refused.
 	std::function<uint32_t()> drag_out_state;
+	// Asks the desktop to bring a top-level window forward, with the permission it gave a launch; without one (empty) the window asks by
+	// itself, which a desktop may answer by only marking it as wanting attention.
+	std::function<void(uint64_t handle,const std::string &token)> activate;
 };
 
 }

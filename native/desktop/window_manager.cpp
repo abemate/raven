@@ -605,11 +605,12 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("GetForegroundWindow", 0, [this](ApiCall &call) { call.ret(active); });
 	// Native windows do not impose a foreground lock; every live runtime process can activate its own windows.
-	registry.add("AllowSetForegroundWindow", 1, [](ApiCall &call) {
+	registry.add("AllowSetForegroundWindow", 1, [this](ApiCall &call) {
 		if (call.u32(0) != UINT32_MAX && !runtime_process_alive(pid_t(call.u32(0)))) {
 			call.fail(87);
 			return;
 		}
+		foreground_allowed = call.u32(0);
 		call.ret(1);
 	});
 	registry.add("SetForegroundWindow", 1, [this](ApiCall &call) {

@@ -427,6 +427,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         ${CMAKE_CURRENT_BINARY_DIR}/${protocol_name}-protocol.c)
                 endforeach()
             endif()
+            # Coming forward with the permission the desktop gave a launch.
+            set(RAVEN_WAYLAND_ACTIVATION OFF)
+            set(PROTOCOL_XML ${WAYLAND_PROTOCOLS_DATA}/staging/xdg-activation/xdg-activation-v1.xml)
+            if(EXISTS "${PROTOCOL_XML}")
+                set(RAVEN_WAYLAND_ACTIVATION ON)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/xdg-activation-v1-client-protocol.h
+                    COMMAND ${WAYLAND_SCANNER} client-header ${PROTOCOL_XML} ${CMAKE_CURRENT_BINARY_DIR}/xdg-activation-v1-client-protocol.h
+                    DEPENDS ${PROTOCOL_XML} VERBATIM)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/xdg-activation-v1-protocol.c
+                    COMMAND ${WAYLAND_SCANNER} private-code ${PROTOCOL_XML} ${CMAKE_CURRENT_BINARY_DIR}/xdg-activation-v1-protocol.c
+                    DEPENDS ${PROTOCOL_XML} VERBATIM)
+                list(APPEND RAVEN_WAYLAND_PROTOCOL_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/xdg-activation-v1-client-protocol.h
+                    ${CMAKE_CURRENT_BINARY_DIR}/xdg-activation-v1-protocol.c)
+            endif()
             add_library(raven_wayland STATIC desktop/wayland.cpp
                 ${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-client-protocol.h ${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.c
                 ${RAVEN_WAYLAND_PROTOCOL_SOURCES})
@@ -435,6 +449,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             endif()
             if(RAVEN_WAYLAND_VIEWPORTER)
                 target_compile_definitions(raven_wayland PRIVATE RAVEN_WAYLAND_VIEWPORTER=1)
+            endif()
+            if(RAVEN_WAYLAND_ACTIVATION)
+                target_compile_definitions(raven_wayland PRIVATE RAVEN_WAYLAND_ACTIVATION=1)
             endif()
             target_include_directories(raven_wayland PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
             target_link_libraries(raven_wayland PUBLIC PkgConfig::WAYLAND_CLIENT)
