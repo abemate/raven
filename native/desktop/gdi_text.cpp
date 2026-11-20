@@ -21,6 +21,56 @@ namespace raven {
 
 namespace {
 
+// The names a font file has when a usual Windows face is drawn from its metric-compatible substitute: a program that matches fonts by the
+// names inside the file (PDF-XChange finds the standard PDF fonts this way) would otherwise see "Liberation Serif" and not take it for Times.
+std::vector<uint8_t> substitute_name_table(std::span<const uint8_t> definition)
+{
+	std::u16string family;
+	for (size_t at = 28; at + 1 < definition.size() && family.size() < 32; at += 2) {
+		const char16_t character = char16_t(definition[at] | definition[at + 1] << 8);
+		if (!character)
+			break;
+		family.push_back(character >= u'A' && character <= u'Z' ? char16_t(character + 32) : character);
+	}
+	struct Names { std::u16string_view key, family, regular, bold, italic, bold_italic; };
+	static constexpr Names known[] = {
+		{u"times new roman", u"Times New Roman", u"TimesNewRomanPSMT", u"TimesNewRomanPS-BoldMT", u"TimesNewRomanPS-ItalicMT", u"TimesNewRomanPS-BoldItalicMT"},
+		{u"arial", u"Arial", u"ArialMT", u"Arial-BoldMT", u"Arial-ItalicMT", u"Arial-BoldItalicMT"},
+		{u"courier new", u"Courier New", u"CourierNewPSMT", u"CourierNewPS-BoldMT", u"CourierNewPS-ItalicMT", u"CourierNewPS-BoldItalicMT"},
+	};
+	const Names *names = nullptr;
+	for (const auto &entry : known)
+		if (entry.key == family)
+			names = &entry;
+	if (!names)
+		return {};
+	int32_t weight = 0;
+	std::memcpy(&weight, definition.data() + 16, 4);
+	const bool bold = weight >= 600, italic = definition[20] != 0;
+	const std::u16string style = bold && italic ? u"Bold Italic" : bold ? u"Bold" : italic ? u"Italic" : u"Regular";
+	const std::u16string full = style == u"Regular" ? std::u16string(names->family) : std::u16string(names->family) + u" " + style;
+	const std::u16string postscript(bold && italic ? names->bold_italic : bold ? names->bold : italic ? names->italic : names->regular);
+	const std::pair<uint16_t, std::u16string> records[] = {{1, std::u16string(names->family)}, {2, style}, {3, full}, {4, full}, {6, postscript}};
+	std::vector<uint8_t> table;
+	const auto put16 = [&table](uint16_t value) { table.push_back(uint8_t(value >> 8)); table.push_back(uint8_t(value)); };
+	const uint16_t count = uint16_t(std::size(records));
+	put16(0); put16(count); put16(uint16_t(6 + count * 12));
+	uint16_t offset = 0;
+	for (const auto &[id, text] : records) {
+		put16(3); put16(1); put16(0x409); put16(id); put16(uint16_t(text.size() * 2)); put16(offset);
+		offset = uint16_t(offset + text.size() * 2);
+	}
+	for (const auto &[id, text] : records)
+		for (const char16_t character : text)
+			put16(uint16_t(character));
+	return table;
+}
+
+}
+
+
+namespace {
+
 std::vector<uint16_t> to_units(std::u16string_view text)
 {
 	return std::vector<uint16_t>(text.begin(), text.end());
@@ -903,6 +953,8 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 				table = objects.text().logical_file(selected_font(dc).definition, collection);
 				if (tag && !collection)
 					table.clear();
+			} else if (auto named = substitute_name_table(selected_font(dc).definition); tag == 0x656d616eU && !named.empty()) {
+				table = std::move(named);
 			} else
 				table = objects.text().logical_table(selected_font(dc).definition, __builtin_bswap32(tag));
 			const uint32_t offset = call.u32(2);
