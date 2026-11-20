@@ -806,6 +806,13 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         add_custom_target(bcrypt_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe)
         add_test(NAME native_bcrypt COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/bcrypt-client.exe)
         set_tests_properties(native_bcrypt PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/crypt-message-client.exe
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${CMAKE_CURRENT_BINARY_DIR}/crypt-message-client.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/crypt_message_client.c -lcrypt32 -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crypt_message_client.c VERBATIM)
+        add_custom_target(crypt_message_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/crypt-message-client.exe)
+        add_test(NAME native_crypt_message COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/crypt-message-client.exe)
+        set_tests_properties(native_crypt_message PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/capi-session-client.exe
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
                 -o ${CMAKE_CURRENT_BINARY_DIR}/capi-session-client.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/capi_session_client.c -ladvapi32 -lkernel32

@@ -3,6 +3,7 @@
 #include "text.h"
 
 #ifdef RAVEN_OPENSSL
+#include <openssl/cms.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -97,6 +98,9 @@ public:
 class CryptMessage : public KernelObject {
 public:
 	std::vector<uint8_t> encoded;
+	// Being decoded through CryptMsgUpdate: the encoding arrives first, and the content after it when the signature is detached from it.
+	bool detached = false, encoding_complete = true;
+	std::vector<uint8_t> content;
 };
 
 // The short names Windows gives the attributes of a distinguished name.
@@ -207,6 +211,8 @@ public:
 	}
 	size_t dword() { return reserve(4, 4); }
 	size_t pointer() { return reserve(width, width); }
+	// The start of a nested structure holding pointers, such as a data blob: aligned as its pointer is, even when a double word comes first.
+	void align() { reserve(0, width); }
 	size_t size() const { return (offset + width - 1) / width * width; }
 	const size_t width;
 
@@ -223,6 +229,60 @@ std::vector<uint8_t> der_of(X509 *certificate)
 		i2d_X509(certificate, &at);
 	return bytes;
 }
+
+// A signed message's signers, and the check of one of them against the content: the signature over its signed attributes when it has them,
+// and the digest of the content. Answers the Windows error, or zero. A key handed in must be the key of the signer's certificate.
+struct SignatureCheck {
+	std::unique_ptr<CMS_ContentInfo, decltype(&CMS_ContentInfo_free)> parsed;
+	STACK_OF(CMS_SignerInfo) *signers = nullptr;
+	std::unique_ptr<STACK_OF(X509), void (*)(STACK_OF(X509) *)> certificates;
+	X509 *signer_certificate = nullptr;
+
+	explicit SignatureCheck(const std::vector<uint8_t> &encoded)
+		: parsed([&] { const unsigned char *at = encoded.data(); return d2i_CMS_ContentInfo(nullptr, &at, long(encoded.size())); }(), CMS_ContentInfo_free),
+		certificates(parsed ? CMS_get1_certs(parsed.get()) : nullptr, [](STACK_OF(X509) *list) { sk_X509_pop_free(list, X509_free); })
+	{
+		signers = parsed ? CMS_get0_SignerInfos(parsed.get()) : nullptr;
+	}
+
+	uint32_t verify(int index, const std::vector<uint8_t> &wanted_key, const std::vector<uint8_t> *content)
+	{
+		constexpr uint32_t not_found = 0x8009100eU, bad_signature = 0x80090006U, bad_hash = 0x80091007U;
+		CMS_SignerInfo *signer = sk_CMS_SignerInfo_value(signers, index);
+		for (int candidate = 0; certificates && !signer_certificate && candidate < sk_X509_num(certificates.get()); ++candidate)
+			if (!CMS_SignerInfo_cert_cmp(signer, sk_X509_value(certificates.get(), candidate)))
+				signer_certificate = sk_X509_value(certificates.get(), candidate);
+		const ASN1_BIT_STRING *key_bits = signer_certificate ? X509_get0_pubkey_bitstr(signer_certificate) : nullptr;
+		if (!key_bits || (!wanted_key.empty() && (size_t(ASN1_STRING_length(key_bits)) != wanted_key.size() ||
+			std::memcmp(ASN1_STRING_get0_data(key_bits), wanted_key.data(), wanted_key.size()))))
+			return not_found;
+		CMS_SignerInfo_set1_signer_cert(signer, signer_certificate);
+		if (CMS_signed_get_attr_count(signer) > 0 && CMS_SignerInfo_verify(signer) <= 0) {
+			ERR_clear_error();
+			return bad_signature;
+		}
+		std::unique_ptr<BIO, decltype(&BIO_free)> source(content ? BIO_new_mem_buf(content->data(), int(content->size())) : nullptr, BIO_free);
+		BIO *digest = CMS_dataInit(parsed.get(), source.get());
+		if (!digest) {
+			ERR_clear_error();
+			return bad_hash;
+		}
+		char block[16384];
+		while (BIO_read(digest, block, sizeof block) > 0) {}
+		const bool good = CMS_SignerInfo_verify_content(signer, digest) > 0;
+		// The chain of digest filters ends in the content source, which has its own owner.
+		while (digest && digest != source.get()) {
+			BIO *next = BIO_pop(digest);
+			BIO_free(digest);
+			digest = next;
+		}
+		if (!good) {
+			ERR_clear_error();
+			return bad_hash;
+		}
+		return 0;
+	}
+};
 
 X509Pointer parse(std::span<const uint8_t> bytes)
 {
@@ -272,6 +332,7 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		const size_t width = call.pointer_width();
 		Layout info(width);
 		const auto version_at = info.dword();
+		info.align();
 		const auto serial_size = info.dword(), serial_data = info.pointer();
 		const auto algorithm_name = info.pointer(), parameters_size = info.dword(), parameters_data = info.pointer();
 		const auto issuer_size = info.dword(), issuer_data = info.pointer();
@@ -318,8 +379,9 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		const auto *extensions = X509_get0_extensions(certificate.get());
 		const int extension_total = extensions ? sk_X509_EXTENSION_num(extensions) : 0;
 		Layout extension(width);
-		const auto extension_oid = extension.pointer(), extension_critical = extension.dword(), extension_size = extension.dword(),
-			extension_value = extension.pointer();
+		const auto extension_oid = extension.pointer(), extension_critical = extension.dword();
+		extension.align();
+		const auto extension_size = extension.dword(), extension_value = extension.pointer();
 		size_t extension_bytes = size_t(extension_total) * extension.size();
 		for (int index = 0; index < extension_total; ++index) {
 			X509_EXTENSION *entry = sk_X509_EXTENSION_value(extensions, index);
@@ -467,6 +529,28 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		return call.read(bytes, size);
 	};
 
+	// CertOpenSystemStore: the named system store of the current user.
+	const auto open_system_store = [&objects](ApiCall &call, const std::u16string &name) {
+		auto store = std::make_shared<CertificateStore>();
+		if (name == u"ROOT" || name == u"root")
+			if (auto *roots = trust_anchors()) {
+				const auto *objects_list = X509_STORE_get0_objects(roots);
+				for (int index = 0; objects_list && index < sk_X509_OBJECT_num(objects_list); ++index)
+					if (auto *certificate = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(objects_list, index)))
+						store->certificates.push_back(der_of(certificate));
+			}
+		const auto made = objects.add_object(store);
+		if (made.status) {
+			call.fail(8, 0);
+			return;
+		}
+		call.ret(made.value);
+	};
+	registry.add("CertOpenSystemStoreW", 2, [open_system_store](ApiCall &call) { open_system_store(call, call[1] ? call.wide(call[1], 64) : std::u16string()); });
+	registry.add("CertOpenSystemStoreA", 2, [open_system_store](ApiCall &call) {
+		const auto name = call[1] ? call.narrow(call[1], 64) : std::string();
+		open_system_store(call, std::u16string(name.begin(), name.end()));
+	});
 	registry.add("CertOpenStore", 5, [&objects](ApiCall &call) {
 		const uint64_t provider = call[0];
 		auto store = std::make_shared<CertificateStore>();
@@ -510,6 +594,20 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		}
 		const auto encoded = call.read(call[1], call.u32(2));
 		const auto made = make_context(call, encoded, 0);
+		if (!made) {
+			call.fail(error_asn1_bad_tag, 0);
+			return;
+		}
+		call.ret(made);
+	});
+	// CertCreateContext makes a context of the kind asked for; certificates are the kind signature readers use.
+	registry.add("CertCreateContext", 6, [make_context](ApiCall &call) {
+		constexpr uint32_t context_certificate = 1;
+		if (call.u32(0) != context_certificate || !call[2] || !call.u32(3)) {
+			call.fail(call.u32(0) != context_certificate ? 0x80092003U : 87, 0);
+			return;
+		}
+		const auto made = make_context(call, call.read(call[2], call.u32(3)), 0);
 		if (!made) {
 			call.fail(error_asn1_bad_tag, 0);
 			return;
@@ -1107,6 +1205,7 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 	const auto cert_info_layout = [](size_t width) {
 		Layout info(width);
 		info.dword();
+		info.align();
 		CertInfoLayout offsets{};
 		offsets.serial_size = info.dword();
 		offsets.serial_data = info.pointer();
@@ -1172,10 +1271,38 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		return bytes;
 	};
 	// CMSG_SIGNER_INFO, with its attributes as CRYPT_ATTRIBUTES whose values stay encoded.
-	const auto signer_image = [serial_bytes](PKCS7_SIGNER_INFO *signer, uint64_t base, size_t width) {
+	// A list of attributes as CRYPT_ATTRIBUTES lays it out: count and array, each with its identifier and encoded values.
+	const auto pack_attributes = [](Packed &packed, STACK_OF(X509_ATTRIBUTE) *list, size_t count_at, size_t array_at) {
+		const size_t width = packed.width;
+		const uint64_t base = packed.base;
+		const int count = list ? sk_X509_ATTRIBUTE_num(list) : 0;
+		Layout attribute(width);
+		const auto attribute_oid = attribute.pointer(), attribute_count = attribute.dword(), attribute_values = attribute.pointer();
+		const size_t blob_size = width == 4 ? 8 : 16;
+		const size_t array = packed.reserve(size_t(count) * attribute.size());
+		packed.put32(count_at, uint32_t(count));
+		packed.put_pointer(array_at, count ? base + array : 0);
+		for (int index = 0; index < count; ++index) {
+			X509_ATTRIBUTE *entry = sk_X509_ATTRIBUTE_value(list, index);
+			const size_t at = array + size_t(index) * attribute.size();
+			char text[80] = {};
+			OBJ_obj2txt(text, sizeof(text), X509_ATTRIBUTE_get0_object(entry), 1);
+			packed.put_pointer(at + attribute_oid, packed.append_text(text));
+			const int values = X509_ATTRIBUTE_count(entry);
+			const size_t blobs = packed.reserve(size_t(values) * blob_size);
+			packed.put32(at + attribute_count, uint32_t(values));
+			packed.put_pointer(at + attribute_values, values ? base + blobs : 0);
+			for (int value = 0; value < values; ++value)
+				packed.put_blob(blobs + size_t(value) * blob_size, blobs + size_t(value) * blob_size + (width == 4 ? 4 : 8),
+					der_encoding(i2d_ASN1_TYPE, X509_ATTRIBUTE_get0_type(entry, value)));
+		}
+	};
+	const auto signer_image = [serial_bytes, pack_attributes](PKCS7_SIGNER_INFO *signer, uint64_t base, size_t width) {
 		Packed packed{{}, base, width};
 		Layout info(width);
-		const auto version = info.dword(), issuer_size = info.dword(), issuer_data = info.pointer(), serial_size = info.dword(),
+		const auto version = info.dword();
+		info.align();
+		const auto issuer_size = info.dword(), issuer_data = info.pointer(), serial_size = info.dword(),
 			serial_data = info.pointer(), hash_oid = info.pointer(), hash_parameters_size = info.dword(), hash_parameters = info.pointer(),
 			encryption_oid = info.pointer(), encryption_parameters_size = info.dword(), encryption_parameters = info.pointer(),
 			encrypted_size = info.dword(), encrypted_data = info.pointer(), signed_count = info.dword(), signed_list = info.pointer(),
@@ -1193,29 +1320,7 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		algorithm(signer->digest_alg, hash_oid, hash_parameters_size, hash_parameters);
 		algorithm(signer->digest_enc_alg, encryption_oid, encryption_parameters_size, encryption_parameters);
 		packed.put_blob(encrypted_size, encrypted_data, asn1_bytes(signer->enc_digest));
-		const auto attributes = [&](STACK_OF(X509_ATTRIBUTE) *list, size_t count_at, size_t array_at) {
-			const int count = list ? sk_X509_ATTRIBUTE_num(list) : 0;
-			Layout attribute(width);
-			const auto attribute_oid = attribute.pointer(), attribute_count = attribute.dword(), attribute_values = attribute.pointer();
-			const size_t blob_size = width == 4 ? 8 : 16;
-			const size_t array = packed.reserve(size_t(count) * attribute.size());
-			packed.put32(count_at, uint32_t(count));
-			packed.put_pointer(array_at, count ? base + array : 0);
-			for (int index = 0; index < count; ++index) {
-				X509_ATTRIBUTE *entry = sk_X509_ATTRIBUTE_value(list, index);
-				const size_t at = array + size_t(index) * attribute.size();
-				char text[80] = {};
-				OBJ_obj2txt(text, sizeof(text), X509_ATTRIBUTE_get0_object(entry), 1);
-				packed.put_pointer(at + attribute_oid, packed.append_text(text));
-				const int values = X509_ATTRIBUTE_count(entry);
-				const size_t blobs = packed.reserve(size_t(values) * blob_size);
-				packed.put32(at + attribute_count, uint32_t(values));
-				packed.put_pointer(at + attribute_values, values ? base + blobs : 0);
-				for (int value = 0; value < values; ++value)
-					packed.put_blob(blobs + size_t(value) * blob_size, blobs + size_t(value) * blob_size + (width == 4 ? 4 : 8),
-						der_encoding(i2d_ASN1_TYPE, X509_ATTRIBUTE_get0_type(entry, value)));
-			}
-		};
+		const auto attributes = [&](STACK_OF(X509_ATTRIBUTE) *list, size_t count_at, size_t array_at) { pack_attributes(packed, list, count_at, array_at); };
 		attributes(signer->auth_attr, signed_count, signed_list);
 		attributes(signer->unauth_attr, unsigned_count, unsigned_list);
 		return std::move(packed.bytes);
@@ -1318,9 +1423,9 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// CryptDecodeObject: the encoded structures signature readers take apart: a signer of a message (a countersignature), a UTC time and
 	// an octet string. With CRYPT_DECODE_ALLOC_FLAG, CryptDecodeObjectEx places the result in memory it allocates.
-	const auto decode = [signer_image, &allocator](ApiCall &call, uint64_t type, uint64_t data, uint32_t size, bool allocate, uint64_t out,
-		uint64_t size_at) {
-		constexpr uint64_t utc_time = 17, octet_string = 25, signer_info = 500;
+	const auto decode = [signer_image, &allocator, &context](ApiCall &call, uint64_t type, uint64_t data, uint32_t size, bool allocate, uint64_t out,
+		uint64_t size_at, uint64_t parameters = 0) {
+		constexpr uint64_t utc_time = 17, octet_string = 25, content_info = 33, signer_info = 500;
 		if (type > 0xffff) {
 			const auto name = call.narrow(type, 80);
 			type = name == "1.2.840.113549.1.9.5" ? utc_time : 0;
@@ -1344,6 +1449,30 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 					return image;
 				};
 			}
+		} else if (type == content_info) {
+			// ContentInfo: SEQUENCE { type OBJECT IDENTIFIER, content [0] EXPLICIT ANY }. The content is the encoding inside the [0].
+			const unsigned char *at = bytes.data();
+			long length = 0;
+			int tag = 0, tag_class = 0;
+			if (!(ASN1_get_object(&at, &length, &tag, &tag_class, long(bytes.size())) & 0x80) && tag == V_ASN1_SEQUENCE) {
+				const unsigned char *end = at + length;
+				if (ASN1_OBJECT *object = d2i_ASN1_OBJECT(nullptr, &at, end - at)) {
+					char text[80] = {};
+					OBJ_obj2txt(text, sizeof(text), object, 1);
+					ASN1_OBJECT_free(object);
+					std::vector<uint8_t> inner;
+					if (at < end && !(ASN1_get_object(&at, &length, &tag, &tag_class, end - at) & 0x80) && tag_class == V_ASN1_CONTEXT_SPECIFIC && !tag)
+						inner.assign(at, at + length);
+					const std::string name(text);
+					build = [name, inner, width](uint64_t base) {
+						Packed packed{{}, base, width};
+						packed.reserve(width * 3);
+						packed.put_pointer(0, packed.append_text(name));
+						packed.put_blob(width, width * 2, inner);
+						return std::move(packed.bytes);
+					};
+				}
+			}
 		} else if (type == octet_string) {
 			const unsigned char *at = bytes.data();
 			if (ASN1_OCTET_STRING *octets = d2i_ASN1_OCTET_STRING(nullptr, &at, long(bytes.size()))) {
@@ -1366,7 +1495,17 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 		}
 		if (allocate) {
 			const auto measured = build(0);
-			const auto block = allocator.allocate(measured.size(), true);
+			// A CRYPT_DECODE_PARA names the caller's own allocator, which later frees the block with its own function.
+			uint64_t block = 0;
+			if (const uint64_t own = parameters ? call.load_pointer(parameters + width) : 0)
+			{
+				const auto result = context.call(own, std::vector<uint64_t>{measured.size()});
+				if (result.stop != NativeStop::returned)
+					throw result;
+				block = result.value;
+			}
+			else
+				block = allocator.allocate(measured.size(), true);
 			if (!block) {
 				call.fail(8);
 				return;
@@ -1395,7 +1534,190 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("CryptDecodeObject", 7, [decode](ApiCall &call) { decode(call, call[1], call[2], call.u32(3), false, call[5], call[6]); });
 	registry.add("CryptDecodeObjectEx", 8, [decode](ApiCall &call) {
 		constexpr uint32_t allocate_flag = 0x8000;
-		decode(call, call[1], call[2], call.u32(3), call.u32(4) & allocate_flag, call[6], call[7]);
+		decode(call, call[1], call[2], call.u32(3), call.u32(4) & allocate_flag, call[6], call[7], (call.u32(4) & allocate_flag) ? call[5] : 0);
+	});
+	// CertVerifyRevocation: no revocation provider is installed here, so the status of the first certificate cannot be established; the
+	// caller reports that the check could not be made, as on a machine that cannot reach one.
+	registry.add("CertVerifyRevocation", 7, [](ApiCall &call) {
+		constexpr uint32_t no_revocation_check = 0x80092012U;
+		if (call[6]) {
+			call.store<uint32_t>(call[6] + 4, 0);
+			call.store<uint32_t>(call[6] + 8, no_revocation_check);
+			call.store<uint32_t>(call[6] + 12, 0);
+		}
+		call.fail(no_revocation_check, 0);
+	});
+	// CryptMsgOpenToDecode and CryptMsgUpdate: a signed message handed over in pieces. PDF signatures are detached: the first pieces are the
+	// PKCS #7 encoding, ended by the final flag, and what follows is the content it signs.
+	registry.add("CryptMsgOpenToDecode", 6, [&objects](ApiCall &call) {
+		constexpr uint32_t detached_flag = 4;
+		auto message = std::make_shared<CryptMessage>();
+		message->detached = (call.u32(1) & detached_flag) != 0;
+		message->encoding_complete = false;
+		const auto made = objects.add_object(message);
+		if (made.status) {
+			call.fail(8, 0);
+			return;
+		}
+		call.ret(made.value);
+	});
+	registry.add("CryptMsgUpdate", 4, [&objects](ApiCall &call) {
+		constexpr uint32_t bad_encoding = 0x8009310bU, wrong_state = 0x80091004U;
+		const auto message = objects.object_as<CryptMessage>(call[0]);
+		if (!message) {
+			call.fail(6, 0);
+			return;
+		}
+		const auto piece = call.u32(2) ? call.read(call[1], call.u32(2)) : std::vector<uint8_t>();
+		if (message->encoding_complete && !message->detached) {
+			call.fail(wrong_state, 0);
+			return;
+		}
+		auto &target = message->encoding_complete ? message->content : message->encoded;
+		target.insert(target.end(), piece.begin(), piece.end());
+		if (!message->encoding_complete && call.u32(3)) {
+			const unsigned char *at = message->encoded.data();
+			if (PKCS7Pointer parsed(d2i_PKCS7(nullptr, &at, long(message->encoded.size())), PKCS7_free); !parsed) {
+				call.fail(bad_encoding, 0);
+				return;
+			}
+			message->encoding_complete = true;
+		}
+		call.ret(1);
+	});
+	// CryptMsgControl: checks a signer's signature over the content with the public key given, by certificate fields or directly.
+	registry.add("CryptMsgControl", 4, [&objects](ApiCall &call) {
+		constexpr uint32_t control_verify = 1, control_verify_ex = 19, signer_public_key = 1, signer_certificate = 2, signer_chain = 3;
+		constexpr uint32_t not_found = 0x8009100eU, bad_type = 0x80091002U;
+		const auto message = objects.object_as<CryptMessage>(call[0]);
+		const uint32_t control = call.u32(2);
+		if (!message || !call[3]) {
+			call.fail(message ? error_invalid_parameter : 6, 0);
+			return;
+		}
+		if (control != control_verify && control != control_verify_ex) {
+			call.fail(bad_type, 0);
+			return;
+		}
+		SignatureCheck check(message->encoded);
+		if (!check.signers) {
+			call.fail(0x8009310bU, 0);
+			return;
+		}
+		STACK_OF(CMS_SignerInfo) *signers = check.signers;
+		const size_t width = call.pointer_width();
+		const size_t key_after_algorithm = width * 3;
+		std::vector<uint8_t> wanted_key;
+		const auto read_key = [&](uint64_t info) {
+			wanted_key = call.read(call.load_pointer(info + key_after_algorithm + width), call.load<uint32_t>(info + key_after_algorithm));
+		};
+		int index = -1;
+		if (control == control_verify) {
+			// The signer is the one the CERT_INFO's issuer and serial number name; the certificate fields come before its key information.
+			const size_t issuer = width == 8 ? 48 : 24, serial = width == 8 ? 8 : 4, spki = width == 8 ? 96 : 56;
+			const auto issuer_der = call.read(call.load_pointer(call[3] + issuer + width), call.load<uint32_t>(call[3] + issuer));
+			auto serial_bytes_le = call.read(call.load_pointer(call[3] + serial + width), call.load<uint32_t>(call[3] + serial));
+			std::reverse(serial_bytes_le.begin(), serial_bytes_le.end());
+			const unsigned char *name_at = issuer_der.data();
+			std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> name(d2i_X509_NAME(nullptr, &name_at, long(issuer_der.size())), X509_NAME_free);
+			std::unique_ptr<BIGNUM, decltype(&BN_free)> number(BN_bin2bn(serial_bytes_le.data(), int(serial_bytes_le.size()), nullptr), BN_free);
+			for (int candidate = 0; name && number && index < 0 && candidate < sk_CMS_SignerInfo_num(signers); ++candidate) {
+				X509_NAME *signer_issuer = nullptr;
+				ASN1_INTEGER *signer_serial = nullptr;
+				if (CMS_SignerInfo_get0_signer_id(sk_CMS_SignerInfo_value(signers, candidate), nullptr, &signer_issuer, &signer_serial) != 1 || !signer_issuer)
+					continue;
+				std::unique_ptr<BIGNUM, decltype(&BN_free)> value(ASN1_INTEGER_to_BN(signer_serial, nullptr), BN_free);
+				if (!X509_NAME_cmp(signer_issuer, name.get()) && value && !BN_cmp(value.get(), number.get()))
+					index = candidate;
+			}
+			read_key(call[3] + spki);
+		} else {
+			// CMSG_CTRL_VERIFY_SIGNATURE_EX_PARA: size, provider, signer index, signer type, signer.
+			index = int(call.load<uint32_t>(call[3] + width * 2));
+			const uint32_t type = call.load<uint32_t>(call[3] + width * 2 + 4);
+			const uint64_t signer = call.load_pointer(call[3] + width * 2 + 8);
+			uint64_t certificate = 0;
+			if (type == signer_public_key)
+				read_key(signer);
+			else if (type == signer_certificate)
+				certificate = signer;
+			else if (type == signer_chain) {
+				// The leaf of the chain's first simple chain: CERT_CHAIN_CONTEXT.rgpChain[0]->rgpElement[0]->pCertContext.
+				const uint64_t chain = call.load_pointer(call.load_pointer(signer + 16 + 8 + width));
+				certificate = call.load_pointer(call.load_pointer(chain + 16 + 8 + width) + width);
+			} else {
+				call.fail(error_invalid_parameter, 0);
+				return;
+			}
+			if (certificate)
+				read_key(call.load_pointer(certificate + width * 3) + (width == 8 ? 96 : 56));
+		}
+		if (index < 0 || index >= sk_CMS_SignerInfo_num(signers)) {
+			call.fail(not_found, 0);
+			return;
+		}
+		const uint32_t status = check.verify(index, wanted_key, message->detached ? &message->content : nullptr);
+		if (status) {
+			call.fail(status, 0);
+			return;
+		}
+		call.ret(1);
+	});
+	// CryptVerifyDetachedMessageSignature and CryptVerifyMessageSignature: one call doing what the message functions do in steps. The
+	// signer's certificate is the one the message carries.
+	const auto verify_message = [make_context](ApiCall &call, const std::vector<uint8_t> &encoded, uint32_t index, const std::vector<uint8_t> *content, uint64_t signer_out) {
+		SignatureCheck check(encoded);
+		if (!check.signers) {
+			call.fail(0x8009310bU, 0);
+			return false;
+		}
+		if (int(index) >= sk_CMS_SignerInfo_num(check.signers)) {
+			call.fail(0x8009100eU, 0);
+			return false;
+		}
+		if (const uint32_t status = check.verify(int(index), {}, content)) {
+			call.fail(status, 0);
+			return false;
+		}
+		if (signer_out)
+			call.store_pointer(signer_out, make_context(call, der_of(check.signer_certificate), 0));
+		return true;
+	};
+	registry.add("CryptVerifyDetachedMessageSignature", 8, [verify_message](ApiCall &call) {
+		const size_t width = call.pointer_width();
+		std::vector<uint8_t> content;
+		for (uint32_t index = 0; index < call.u32(4); ++index) {
+			const auto piece = call.read(call.load_pointer(call[5] + index * width), call.load<uint32_t>(call[6] + index * 4));
+			content.insert(content.end(), piece.begin(), piece.end());
+		}
+		if (call[7])
+			call.store_pointer(call[7], 0);
+		if (verify_message(call, call.read(call[2], call.u32(3)), call.u32(1), &content, call[7]))
+			call.ret(1);
+	});
+	registry.add("CryptVerifyMessageSignature", 7, [verify_message](ApiCall &call) {
+		if (call[6])
+			call.store_pointer(call[6], 0);
+		const auto encoded = call.read(call[2], call.u32(3));
+		if (!verify_message(call, encoded, call.u32(1), nullptr, call[6]))
+			return;
+		if (call[5]) {
+			// The content the message carries, for a caller that asks for it.
+			const unsigned char *at = encoded.data();
+			std::unique_ptr<CMS_ContentInfo, decltype(&CMS_ContentInfo_free)> parsed(d2i_CMS_ContentInfo(nullptr, &at, long(encoded.size())), CMS_ContentInfo_free);
+			ASN1_OCTET_STRING **inner = parsed ? CMS_get0_content(parsed.get()) : nullptr;
+			const std::vector<uint8_t> value = inner && *inner ? asn1_bytes(*inner) : std::vector<uint8_t>();
+			const uint32_t capacity = call.load<uint32_t>(call[5]);
+			call.store<uint32_t>(call[5], uint32_t(value.size()));
+			if (call[4]) {
+				if (capacity < value.size()) {
+					call.fail(234, 0);
+					return;
+				}
+				call.write(call[4], value);
+			}
+		}
+		call.ret(1);
 	});
 	registry.add("CryptMsgClose", 1, [&objects](ApiCall &call) {
 		if (objects.object_as<CryptMessage>(call[0]))
@@ -1404,9 +1726,11 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// The parameters of a signed message: its type and content, its signers and their certificates' issuer and serial number, and the
 	// certificates it carries.
-	registry.add("CryptMsgGetParam", 5, [message_of, signer_image, answer_bytes, serial_bytes, cert_info_layout](ApiCall &call) {
+	registry.add("CryptMsgGetParam", 5, [&objects, message_of, signer_image, pack_attributes, answer_bytes, serial_bytes, cert_info_layout](ApiCall &call) {
 		constexpr uint32_t type_param = 1, content_param = 2, inner_type_param = 4, signer_count_param = 5, signer_info_param = 6,
-			signer_cert_info_param = 7, cert_count_param = 11, cert_param = 12;
+			signer_cert_info_param = 7, signer_hash_algorithm_param = 8, signer_signed_attributes_param = 9, signer_unsigned_attributes_param = 10,
+			cert_count_param = 11, cert_param = 12, crl_count_param = 13, crl_param = 14, computed_hash_param = 22, encrypted_digest_param = 27,
+			encoded_signer_param = 28, encoded_message_param = 29, version_param = 30;
 		const auto message = message_of(call[0]);
 		if (!message || !PKCS7_type_is_signed(message.get()) || !call[4]) {
 			call.fail(message ? 0x8009100cU : 6);
@@ -1465,6 +1789,94 @@ void register_crypt32_api(ApiRegistry &registry, KernelContext &context)
 			});
 			return;
 		}
+		case signer_hash_algorithm_param: {
+			if (int(index) >= sk_PKCS7_SIGNER_INFO_num(signers)) {
+				call.fail(0x80091008U);
+				return;
+			}
+			const X509_ALGOR *algorithm = sk_PKCS7_SIGNER_INFO_value(signers, int(index))->digest_alg;
+			const size_t width = call.pointer_width();
+			answer_bytes(call, call[3], call[4], [&](uint64_t base) {
+				Packed packed{{}, base, width};
+				packed.reserve(width * 3);
+				char text[80] = {};
+				OBJ_obj2txt(text, sizeof(text), algorithm->algorithm, 1);
+				packed.put_pointer(0, packed.append_text(text));
+				packed.put_blob(width, width * 2, algorithm->parameter ? der_encoding(i2d_ASN1_TYPE, algorithm->parameter) : std::vector<uint8_t>());
+				return std::move(packed.bytes);
+			});
+			return;
+		}
+		case signer_signed_attributes_param:
+		case signer_unsigned_attributes_param: {
+			if (int(index) >= sk_PKCS7_SIGNER_INFO_num(signers)) {
+				call.fail(0x80091008U);
+				return;
+			}
+			PKCS7_SIGNER_INFO *signer = sk_PKCS7_SIGNER_INFO_value(signers, int(index));
+			auto *list = call.u32(1) == signer_signed_attributes_param ? signer->auth_attr : signer->unauth_attr;
+			if (!list || !sk_X509_ATTRIBUTE_num(list)) {
+				call.fail(0x8009100dU);
+				return;
+			}
+			const size_t width = call.pointer_width();
+			answer_bytes(call, call[3], call[4], [&](uint64_t base) {
+				Packed packed{{}, base, width};
+				packed.reserve(width * 2);
+				pack_attributes(packed, list, 0, width);
+				return std::move(packed.bytes);
+			});
+			return;
+		}
+		case crl_count_param:
+			word(uint32_t(message->d.sign->crl ? sk_X509_CRL_num(message->d.sign->crl) : 0));
+			return;
+		case crl_param: {
+			const auto *crls = message->d.sign->crl;
+			if (!crls || int(index) >= sk_X509_CRL_num(crls)) {
+				call.fail(0x80091008U);
+				return;
+			}
+			const auto bytes = der_encoding(i2d_X509_CRL, sk_X509_CRL_value(crls, int(index)));
+			answer_bytes(call, call[3], call[4], [&](uint64_t) { return bytes; });
+			return;
+		}
+		case computed_hash_param: {
+			const auto object = objects.object_as<CryptMessage>(call[0]);
+			if (int(index) >= sk_PKCS7_SIGNER_INFO_num(signers) || !object) {
+				call.fail(0x80091008U);
+				return;
+			}
+			const EVP_MD *method = EVP_get_digestbyobj(sk_PKCS7_SIGNER_INFO_value(signers, int(index))->digest_alg->algorithm);
+			if (!method) {
+				call.fail(0x80091002U);
+				return;
+			}
+			std::vector<uint8_t> value(size_t(EVP_MD_get_size(method)));
+			unsigned length = 0;
+			EVP_Digest(object->content.data(), object->content.size(), value.data(), &length, method, nullptr);
+			answer_bytes(call, call[3], call[4], [&](uint64_t) { return value; });
+			return;
+		}
+		case encrypted_digest_param:
+		case encoded_signer_param: {
+			if (int(index) >= sk_PKCS7_SIGNER_INFO_num(signers)) {
+				call.fail(0x80091008U);
+				return;
+			}
+			PKCS7_SIGNER_INFO *signer = sk_PKCS7_SIGNER_INFO_value(signers, int(index));
+			const auto bytes = call.u32(1) == encrypted_digest_param ? asn1_bytes(signer->enc_digest) : der_encoding(i2d_PKCS7_SIGNER_INFO, signer);
+			answer_bytes(call, call[3], call[4], [&](uint64_t) { return bytes; });
+			return;
+		}
+		case encoded_message_param: {
+			const auto object = objects.object_as<CryptMessage>(call[0]);
+			answer_bytes(call, call[3], call[4], [&](uint64_t) { return object->encoded; });
+			return;
+		}
+		case version_param:
+			word(uint32_t(ASN1_INTEGER_get(message->d.sign->version)));
+			return;
 		case cert_count_param:
 			word(uint32_t(certificates ? sk_X509_num(certificates) : 0));
 			return;
