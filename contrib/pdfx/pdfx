@@ -18,6 +18,9 @@ export RAVEN_BACKTRACE=${RAVEN_BACKTRACE:-1}
 # A Windows function Raven lacks fails that one action instead of ending the program, so unsaved work survives; the log still names it.
 export RAVEN_CONTINUE_UNIMPLEMENTED=${RAVEN_CONTINUE_UNIMPLEMENTED:-1}
 log_dir=${PDFX_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/pdfx}
+# While the file trace-input exists in the log folder, clicks, keys and focus go to the log too, in a session already running:
+#   touch "$log_dir/trace-input" starts it, rm "$log_dir/trace-input" stops it.
+export RAVEN_TRACE_INPUT_ON=${RAVEN_TRACE_INPUT_ON:-$log_dir/trace-input}
 if [[ -z ${PDFX_DRY_RUN:-} ]] && mkdir -p "$log_dir" 2>/dev/null; then
     log="$log_dir/pdfx-$(date +%Y%m%d-%H%M%S).log"
     ln -sfn "$(basename "$log")" "$log_dir/latest.log"

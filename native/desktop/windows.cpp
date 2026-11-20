@@ -23,6 +23,7 @@
 #include <x86intrin.h>
 #include <thread>
 #include <utility>
+#include "input_trace.h"
 
 namespace raven {
 
@@ -1209,6 +1210,8 @@ void NativeWindows::receive(const DesktopEvent &event)
 	if (event.kind==DesktopEventKind::drag) { receive_drag(event); return; }
 	if (placing_press && (event.kind==DesktopEventKind::pointer_motion || event.kind==DesktopEventKind::pointer_button ||
 		event.kind==DesktopEventKind::pointer_wheel || event.kind==DesktopEventKind::pointer_relative || event.kind==DesktopEventKind::key)) {
+		if (event.kind==DesktopEventKind::pointer_button && input_trace_on())
+			fprintf(stderr,"input button %x held while a press is placed, time %lld\n",event.message,input_trace_now());
 		held_input.push_back(event);
 		return;
 	}
@@ -1237,7 +1240,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 		return;
 	}
 	if (event.kind==DesktopEventKind::keyboard_focus) {
-		if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"keyboard focus event %llx, focus %llx root %llx\n",(unsigned long long)event.window,
+		if (std::getenv("RAVEN_TRACE_KEYS") || input_trace_on()) fprintf(stderr,"keyboard focus event %llx, focus %llx root %llx\n",(unsigned long long)event.window,
 			(unsigned long long)focus,(unsigned long long)(focus ? objects.window_root(focus) : 0));
 		std::array<bool,256> initial{};
 		for (const auto code : event.held_keys) {
@@ -1311,7 +1314,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 		return;
 	}
 	if (event.kind==DesktopEventKind::key) {
-		if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"key %u %s -> focus %llx visible %d thread %u\n",event.message,event.wparam ? "down" : "up",
+		if (std::getenv("RAVEN_TRACE_KEYS") || input_trace_on()) fprintf(stderr,"key %u %s -> focus %llx visible %d thread %u\n",event.message,event.wparam ? "down" : "up",
 			(unsigned long long)focus,focus && std::as_const(objects).window(focus) ? int(objects.window_visible(focus)) : -1,environment.thread_id());
 		// Keys go to the focus window whichever of the program's host windows the compositor reports them on. The compositor sends keys
 		// only to the program that has the keyboard, so a key that comes without a window (the keyboard appeared after the compositor
@@ -1338,6 +1341,10 @@ void NativeWindows::receive(const DesktopEvent &event)
 		// Ctrl and Alt together type nothing on a layout without AltGr characters (a compositor's AltGr is its own Level3 modifier, so
 		// a character it gives is kept by xkb under that modifier, not under Ctrl+Alt).
 		const bool chord=(vk_async[0x11] & 0x80) && (vk_async[0x12] & 0x80);
+		// The modifiers as the program sees them: held (async) and as of the messages it has read (GetKeyState).
+		if (input_trace_on()) fprintf(stderr,"input key vk %x %s to %llx at %lld, shift/ctrl/alt held %d%d%d read %d%d%d\n",key.code,pressed ? "down" : "up",
+			(unsigned long long)focus,input_trace_now(),(vk_async[0x10]>>7)&1,(vk_async[0x11]>>7)&1,(vk_async[0x12]>>7)&1,(vk_state[0x10]>>7)&1,
+			(vk_state[0x11]>>7)&1,(vk_state[0x12]>>7)&1);
 		queue({focus,key.code,flags,system ? (pressed ? 0x104U : 0x105U) : (pressed ? 0x100U : 0x101U),message_time(),cursor_x,cursor_y,pressed && !chord ? key.character : 0},1);
 		vk_async[key.code&255]=pressed ? (vk_async[key.code&255] | 0x80) : (vk_async[key.code&255] & 0x7f);
 		if (const auto side=sided_key(key.code,key.scan,key.extended)) set_key(vk_async,side,pressed);
@@ -1445,6 +1452,10 @@ void NativeWindows::receive(const DesktopEvent &event)
 	static const bool trace_buttons=std::getenv("RAVEN_TRACE_MSG")!=nullptr;
 	if (trace_buttons && event.kind==DesktopEventKind::pointer_button)
 		fprintf(stderr,"button %x on %llx at %d,%d capture %llx\n",message,(unsigned long long)event.window,event.x,event.y,(unsigned long long)capture);
+	if (event.kind==DesktopEventKind::pointer_button && input_trace_on())
+		fprintf(stderr,"input button %x on %llx at %d,%d time %lld capture %llx frame drag %llx scroll drag %llx raw only %d placing %d queued %zu\n",
+			message,(unsigned long long)event.window,event.x,event.y,input_trace_now(),(unsigned long long)capture,(unsigned long long)frame_drag.window,
+			(unsigned long long)scroll_drag.window,raw_mouse.registered && raw_mouse.no_legacy ? 1 : 0,placing_press ? 1 : 0,messages.size());
 	if (!event.window && event.kind==DesktopEventKind::pointer_button) { mouse_buttons=buttons; mouse_keys(vk_async,buttons); return; }
 	const auto *window=std::as_const(objects).window(event.window);
 	if (!window || !window->visible) throw std::runtime_error("pointer event targets an unavailable guest window");
@@ -1572,7 +1583,7 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 	const bool inside=x>=window->outer.left && y>=window->outer.top && x<window->outer.right && y<window->outer.bottom;
 	const auto hit=!capture && inset && inside ? send(target,0x84,0,uint16_t(x)|(uint64_t(uint16_t(y))<<16)) : 1;
 	window=objects.window(target);
-	if (trace_buttons_enabled() && message!=0x200)
+	if ((trace_buttons_enabled() || input_trace_on()) && message!=0x200)
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
 			window && shown() ? 1 : 0);
 	if (!window || !shown() || !hit) return;
@@ -1612,6 +1623,11 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		const auto *type=objects.window_class(window->class_id);
 		const bool again=last_press.window==target && last_press.message==message && now-last_press.time<=500 &&
 			std::abs(int64_t(x)-last_press.x)<=2 && std::abs(int64_t(y)-last_press.y)<=2;
+		if (input_trace_on())
+			fprintf(stderr,"input press %x on %llx class %s double clicks %d: last on %llx %x, %u ms and %lld,%lld px apart -> %s\n",message,
+				(unsigned long long)target,type ? type->name.c_str() : "?",type && (type->style & 8) ? 1 : 0,
+				(unsigned long long)last_press.window,last_press.message,now-last_press.time,(long long)(int64_t(x)-last_press.x),
+				(long long)(int64_t(y)-last_press.y),again && type && (type->style & 8) ? "double" : "single");
 		if (again && type && (type->style & 8)) { message+=2; last_press={}; }
 		else last_press={target,message,now,int32_t(x),int32_t(y)};
 	}
@@ -1686,6 +1702,10 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 			process.write_memory(args[0],bytes);
 			// RAVEN_TRACE_MSG also follows what each retrieval returns, with the filter it was asked with.
 			static const char *const trace_retrieval=std::getenv("RAVEN_TRACE_MSG");
+			// The input the program takes off its queue, with how long it waited there.
+			if (!trace_retrieval && (flags & 1U) && ((value.message>=0x100 && value.message<=0x109) || (value.message>=0x201 && value.message<=0x20e)) &&
+				input_trace_on())
+				fprintf(stderr,"input read %x by %llx thread %u after %u ms\n",value.message,(unsigned long long)value.window,me,message_time()-value.time);
 			if (trace_retrieval)
 				fprintf(stderr,"get %llx %x filter %llx %x-%x %s\n",(unsigned long long)value.window,value.message,(unsigned long long)window,minimum,maximum,
 					(flags & 1U) ? "remove" : "peek");

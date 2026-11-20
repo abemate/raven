@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <sys/mman.h>
 #include <utility>
+#include "input_trace.h"
 
 namespace raven {
 
@@ -345,12 +346,16 @@ bool NativeWindows::system_dispatch(std::string_view name)
 				throw uint32_t(1400);
 			result = capture;
 			capture = args[0];
+			if (input_trace_on())
+				fprintf(stderr, "input capture set %llx (was %llx)\n", (unsigned long long)capture, (unsigned long long)result);
 			if (result && result != args[0] && std::as_const(objects).window(result))
 				send(result, 0x215, 0, args[0]);
 			else if (result && !std::as_const(objects).window(result))
 				result = 0;
 		} else if (name == "ReleaseCapture") {
 			process.api_arguments(0);
+			if (input_trace_on())
+				fprintf(stderr, "input capture released (was %llx)\n", (unsigned long long)capture);
 			if (capture) {
 				const auto previous = capture;
 				capture = 0;

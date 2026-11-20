@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+#include "input_trace.h"
 
 namespace raven {
 
@@ -432,8 +433,11 @@ struct WaylandPresentation::State {
 					auto &state=*static_cast<State *>(data); state.pointer_x=coordinate(x); state.pointer_y=coordinate(y);
 					state.pointer_event(DesktopEventKind::pointer_motion);
 				};
-				value.button=[](void *data,wl_pointer *,uint32_t serial,uint32_t,uint32_t button,uint32_t pressed) {
+				value.button=[](void *data,wl_pointer *,uint32_t serial,uint32_t time,uint32_t button,uint32_t pressed) {
 					auto &state=*static_cast<State *>(data);
+					// The desktop's own time of the click: two clicks it saw close together may reach the program far apart.
+					if (input_trace_on()) fprintf(stderr,"input host button %x %s desktop time %u read at %lld window %llx at %d,%d\n",button,
+						pressed ? "press" : "release",time,input_trace_now(),(unsigned long long)state.pointer_window,state.pointer_x,state.pointer_y);
 					state.last_serial=serial;
 					if (pressed) { state.press_serial=serial; state.button_serial=serial; state.button_window=state.pointer_window; }
 					state.buttons_down=pressed ? state.buttons_down+1 : state.buttons_down ? state.buttons_down-1 : 0;
@@ -492,7 +496,8 @@ struct WaylandPresentation::State {
 					}
 					state.keyboard_window=0;
 					for (const auto &[handle,window] : state.surfaces) if (window->proxy==surface) state.keyboard_window=handle;
-					if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"keyboard enter %p -> %llx\n",(void *)surface,(unsigned long long)state.keyboard_window);
+					if (std::getenv("RAVEN_TRACE_KEYS") || input_trace_on())
+						fprintf(stderr,"keyboard enter %p -> %llx\n",(void *)surface,(unsigned long long)state.keyboard_window);
 					// Focus sent to a surface just destroyed, as a popup menu made again or closed, was on its way before the compositor heard: nothing has focus.
 					if (!state.keyboard_window) { state.keyboard_event({0,0,0,0,DesktopEventKind::keyboard_focus}); return; }
 					// Wayland does not say when a minimized window comes back; it getting the keyboard is the sign. The program is told to restore.
@@ -509,11 +514,13 @@ struct WaylandPresentation::State {
 				};
 				value.leave=[](void *data,wl_keyboard *,uint32_t,wl_surface *surface) {
 					auto &state=*static_cast<State *>(data); state.keyboard_window=0;
-					if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"keyboard leave %p\n",(void *)surface);
+					if (std::getenv("RAVEN_TRACE_KEYS") || input_trace_on()) fprintf(stderr,"keyboard leave %p\n",(void *)surface);
 					state.keyboard_event({0,0,0,0,DesktopEventKind::keyboard_focus});
 				};
-				value.key=[](void *data,wl_keyboard *,uint32_t serial,uint32_t,uint32_t key,uint32_t pressed) {
+				value.key=[](void *data,wl_keyboard *,uint32_t serial,uint32_t time,uint32_t key,uint32_t pressed) {
 					auto &state=*static_cast<State *>(data);
+					if (input_trace_on()) fprintf(stderr,"input host key %u %s desktop time %u read at %lld window %llx\n",key,pressed ? "down" : "up",time,
+						input_trace_now(),(unsigned long long)state.keyboard_window);
 					state.last_serial=serial;
 					if (pressed) { state.press_serial=serial; state.pending_move=0; }
 					if (std::getenv("RAVEN_TRACE_KEYS")) {
