@@ -2752,6 +2752,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     set(token_base 0x1e900000)
                 endif()
                 if(remote_compiler)
+                    set(dll_directory_client ${CMAKE_CURRENT_BINARY_DIR}/dll-directory${width}.exe)
+                    add_custom_command(OUTPUT ${dll_directory_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${dll_directory_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/dll_directory_client.c -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/dll_directory_client.c VERBATIM)
+                    add_custom_target(dll_directory_fixture_x${width} ALL DEPENDS ${dll_directory_client})
+                    add_test(NAME native_dll_directory_x${width} COMMAND raven --run-process --execution=native ${dll_directory_client})
+                    set_tests_properties(native_dll_directory_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/dll-directory-prefix${width})
                     set(shared_wait_client ${CMAKE_CURRENT_BINARY_DIR}/shared-wait${width}.exe)
                     add_custom_command(OUTPUT ${shared_wait_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
