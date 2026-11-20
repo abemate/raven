@@ -56,6 +56,8 @@ public:
 	void set_global_allocator(std::function<uint64_t(uint64_t)> allocator) { global_allocator = std::move(allocator); }
 	// The bytes a global memory handle stands for: a movable block's handle stays fixed while its data moves.
 	void set_global_data(std::function<uint64_t(uint64_t)> data) { global_data = std::move(data); }
+	// The size of a global memory block in bytes, or UINT64_MAX for memory that is not one.
+	void set_global_size(std::function<uint64_t(uint64_t)> size) { global_size = std::move(size); }
 	// The program's paths of the files a text/uri-list names, for files dragged in from the desktop.
 	void set_drop_paths(std::function<std::vector<std::u16string>(std::string_view)> paths) { drop_paths = std::move(paths); }
 	// The text/uri-list of the program's files, for a drag out to the desktop.
@@ -461,7 +463,7 @@ private:
 	// Sequence already offered to the host selection and the host selection already imported.
 	uint32_t clipboard_published=0;
 	uint64_t host_selection=0;
-	std::function<uint64_t(uint64_t)> global_allocator, global_data;
+	std::function<uint64_t(uint64_t)> global_allocator, global_data, global_size;
 	std::function<std::vector<std::u16string>(std::string_view)> drop_paths;
 	std::function<std::string(const std::vector<std::u16string> &)> drag_uris;
 	// A drag of files from the desktop: the broker window (see raven-shell dragdrop.c) of the thread that plays it to its drop targets.

@@ -2787,6 +2787,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
 	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
 	windows.set_global_data([&allocator](uint64_t handle) { return allocator.data(handle); });
+	windows.set_global_size([&allocator](uint64_t handle) { return allocator.size(allocator.data(handle)); });
 	windows.set_drag_uris([&paths](const std::vector<std::u16string> &names) {
 		std::string list;
 		for (const auto &name : names) {

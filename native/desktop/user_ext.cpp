@@ -518,14 +518,32 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	});
 	// Text copied by the guest is offered to the host selection when the clipboard closes; text another host client
 	// copied replaces the contents the next time the guest looks, with the line ends converted on both sides.
-	const auto publish_host = [this](ApiCall &call) {
+	// Clipboard text ends at its terminator or with its memory block, whichever comes first: a program may fill the block exactly, as
+	// PDF-XChange does, and what lies after it is not the program's text.
+	const auto block_text = [this](ApiCall &call, uint64_t handle) {
+		const uint64_t memory = global_data && handle ? global_data(handle) : handle;
+		const uint64_t size = global_size && handle ? global_size(handle) : UINT64_MAX;
+		auto text = call.wide(memory, 1 << 24);
+		if (size != UINT64_MAX && text.size() > size / 2)
+			text.resize(size / 2);
+		return text;
+	};
+	const auto block_narrow = [this](ApiCall &call, uint64_t handle) {
+		const uint64_t memory = global_data && handle ? global_data(handle) : handle;
+		const uint64_t size = global_size && handle ? global_size(handle) : UINT64_MAX;
+		auto text = call.narrow(memory, 1 << 24);
+		if (size != UINT64_MAX && text.size() > size)
+			text.resize(size);
+		return text;
+	};
+	const auto publish_host = [this, block_text](ApiCall &call) {
 		if (!presentation.clipboard_publish || clipboard_published == clipboard_sequence)
 			return;
 		clipboard_published = clipboard_sequence;
 		const auto found = clipboard_data.find(13);
 		if (found == clipboard_data.end() || !found->second)
 			return;
-		const auto text = to_utf8(call.wide(global_data ? global_data(found->second) : found->second, 1 << 24));
+		const auto text = to_utf8(block_text(call, found->second));
 		std::string host;
 		for (size_t at = 0; at < text.size(); ++at)
 			if (text[at] != '\r' || at + 1 >= text.size() || text[at + 1] != '\n')
@@ -580,7 +598,7 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	});
 	// A data object put on the OLE clipboard gives up its text at once, as global memory the clipboard keeps; its other formats are not
 	// offered. The object itself is not kept, so the clipboard never names it as the current one.
-	registry.add("OleSetClipboard", 1, [this, publish_host, block = uint64_t(0)](ApiCall &call) mutable {
+	registry.add("OleSetClipboard", 1, [this, publish_host, block_text, block_narrow, block = uint64_t(0)](ApiCall &call) mutable {
 		if (clipboard_window) {
 			call.ret(0x800401d0); // CLIPBRD_E_CANT_OPEN
 			return;
@@ -623,8 +641,8 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 				continue;
 			}
 			// The object keeps the memory it hands out with an owner, so the clipboard takes a copy.
-			const auto text = kind == 13 ? call.wide(memory, 1 << 24) : std::u16string();
-			const auto narrow = kind == 1 ? call.narrow(memory, 1 << 24) : std::string();
+			const auto text = kind == 13 ? block_text(call, handle) : std::u16string();
+			const auto narrow = kind == 1 ? block_narrow(call, handle) : std::string();
 			const size_t size = kind == 13 ? (text.size() + 1) * 2 : narrow.size() + 1;
 			if (const auto copy = global_allocator(size)) {
 				if (kind == 13)
@@ -653,6 +671,18 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			call.fail(1418);
 			return;
 		}
+		// CF_UNICODETEXT ends with a terminator inside its block. PDF-XChange sizes the block for one, writes it, then copies one unit too
+		// many over it from its own string, leaving whatever followed that string: a block without a terminator gets one in its last unit.
+		if (call[1] && call.u32(0) == 13 && global_size && global_data)
+			if (const uint64_t size = global_size(call[1]); size != UINT64_MAX && size >= 2) {
+				const uint64_t memory = global_data(call[1]), units = size / 2;
+				const auto bytes = call.read(memory, units * 2);
+				bool terminated = false;
+				for (uint64_t at = 0; at < units && !terminated; ++at)
+					terminated = !bytes[at * 2] && !bytes[at * 2 + 1];
+				if (!terminated)
+					call.store<uint16_t>(memory + (units - 1) * 2, 0);
+			}
 		if (call[1])
 			clipboard_data[call.u32(0)] = call[1];
 		else

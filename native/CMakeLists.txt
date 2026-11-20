@@ -1422,6 +1422,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_dependencies(key_tip_test key_tip_fixture raven-bootstrap)
             add_test(NAME native_key_tip COMMAND key_tip_test $<TARGET_FILE:raven-bootstrap> ${KEY_TIP_FIXTURE})
             set_tests_properties(native_key_tip PROPERTIES TIMEOUT 30)
+            set(CLIPBOARD_BOUNDS_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/clipboard-bounds.exe)
+            add_custom_command(OUTPUT ${CLIPBOARD_BOUNDS_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x1a4000000,--no-insert-timestamp
+                    -o ${CLIPBOARD_BOUNDS_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/clipboard_bounds_client.c -lkernel32 -luser32 -lgdi32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/clipboard_bounds_client.c VERBATIM)
+            add_custom_target(clipboard_bounds_fixture ALL DEPENDS ${CLIPBOARD_BOUNDS_FIXTURE})
+            add_executable(clipboard_bounds_test desktop/clipboard_bounds_test.cpp)
+            target_link_libraries(clipboard_bounds_test PRIVATE raven_cpu)
+            add_dependencies(clipboard_bounds_test clipboard_bounds_fixture raven-bootstrap)
+            add_test(NAME native_clipboard_bounds COMMAND clipboard_bounds_test $<TARGET_FILE:raven-bootstrap> ${CLIPBOARD_BOUNDS_FIXTURE})
+            set_tests_properties(native_clipboard_bounds PROPERTIES TIMEOUT 30)
             set(COVERED_WINDOW_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/covered-window-client.exe)
             add_custom_command(OUTPUT ${COVERED_WINDOW_FIXTURE}
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
