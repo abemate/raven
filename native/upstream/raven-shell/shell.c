@@ -794,6 +794,39 @@ HRESULT WINAPI CoCreateInstance(REFCLSID clsid, LPUNKNOWN outer, DWORD context, 
 	return create_instance(clsid, outer, context, iid, out);
 }
 
+/* Creates an embedded object: the class is instantiated, handed its client site and given a new storage to persist in. A class that is
+ * not registered fails as it does on Windows; the caller goes on without the object. */
+HRESULT WINAPI OleCreate(REFCLSID clsid, REFIID iid, DWORD render, FORMATETC *format, IOleClientSite *site, IStorage *storage, void **object)
+{
+	IUnknown *unknown = NULL;
+	IOleObject *ole = NULL;
+	IPersistStorage *persist = NULL;
+	HRESULT hr;
+	(void)render;
+	(void)format;
+	if (!object)
+		return E_INVALIDARG;
+	*object = NULL;
+	hr = create_instance(clsid, NULL, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, iid, (void **)&unknown);
+	if (FAILED(hr))
+		return hr;
+	if (SUCCEEDED(IUnknown_QueryInterface(unknown, &IID_IOleObject, (void **)&ole))) {
+		if (site)
+			hr = IOleObject_SetClientSite(ole, site);
+		IOleObject_Release(ole);
+	}
+	if (SUCCEEDED(hr) && storage && SUCCEEDED(IUnknown_QueryInterface(unknown, &IID_IPersistStorage, (void **)&persist))) {
+		hr = IPersistStorage_InitNew(persist, storage);
+		IPersistStorage_Release(persist);
+	}
+	if (FAILED(hr)) {
+		IUnknown_Release(unknown);
+		return hr;
+	}
+	*object = unknown;
+	return S_OK;
+}
+
 HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, LPVOID server, REFIID iid, LPVOID *out)
 {
 	if (!out)
