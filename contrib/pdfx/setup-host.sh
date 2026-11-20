@@ -46,7 +46,7 @@ done
 
 step "Configuring Raven in $build"
 cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DRAVEN_RTL_COMPONENT_PATH="$components/rtl/raven-rtl.dll" \
+    -DRAVEN_RTL_COMPONENT_PATH="$(part rtl/raven-rtl.dll)" \
     -DRAVEN_CONTROLS_COMPONENT_DIR="$controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$controls32" \
     -DRAVEN_INSTALLER_COMPONENT_DIR="$installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$installer32" \
     -DRAVEN_DXVK_PE64_DIR="$components/graphics/dxvk/pe64" -DRAVEN_DXVK_PE32_DIR="$components/graphics/dxvk/pe32" \

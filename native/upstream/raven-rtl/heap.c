@@ -196,6 +196,23 @@ static segment *add_segment(heap *owner, SIZE_T needed)
 	return item;
 }
 
+/* Memory given back to the top stays committed for the next blocks up to this much; past that it goes back to the system, so closing a large
+ * document (whose page cache PDF-XChange frees in one sweep) leaves the machine with the memory rather than a heap that held it once. */
+#define TOP_RETAINED ((SIZE_T)2 * 1024 * 1024)
+
+static void release_above_top(heap *owner, segment *item)
+{
+	if (!item->owned)
+		return;
+	PUCHAR keep = (PUCHAR)(((ULONG_PTR)item->top + TOP_RETAINED + 0xfff) & ~(ULONG_PTR)0xfff);
+	if (keep >= item->committed || (SIZE_T)(item->committed - keep) < TOP_RETAINED)
+		return;
+	PVOID base = keep;
+	SIZE_T size = (SIZE_T)(item->committed - keep);
+	if (NT_SUCCESS(ZwFreeVirtualMemory(CURRENT_PROCESS, &base, &size, MEM_DECOMMIT)))
+		item->committed = keep;
+}
+
 static chunk *carve_from_top(heap *owner, segment *item, SIZE_T units)
 {
 	SIZE_T bytes = units * UNIT;
@@ -354,6 +371,7 @@ static void free_small(heap *owner, chunk *block)
 		/* The last chunk goes back to the top, where it can serve a block of any size. */
 		item->top = (PUCHAR)block;
 		item->last_units = block->previous_units;
+		release_above_top(owner, item);
 		return;
 	}
 	after->previous_units = block->units;
