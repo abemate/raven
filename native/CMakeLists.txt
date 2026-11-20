@@ -2809,6 +2809,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_process_event_x${width} COMMAND raven --run-process --execution=native --timeout-ms=45000 ${event_client})
                     set_tests_properties(native_process_event_x${width} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/event-prefix${width})
+                    set(time_adjustment_client ${CMAKE_CURRENT_BINARY_DIR}/time-adjustment${width}.exe)
+                    add_custom_command(OUTPUT ${time_adjustment_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${time_adjustment_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/time_adjustment_client.c -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/time_adjustment_client.c VERBATIM)
+                    add_custom_target(time_adjustment_fixture_x${width} ALL DEPENDS ${time_adjustment_client})
+                    add_test(NAME native_time_adjustment_x${width} COMMAND raven --run-process --execution=native ${time_adjustment_client})
+                    set_tests_properties(native_time_adjustment_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/time-adjustment-prefix${width})
                     set(optional_calls_client ${CMAKE_CURRENT_BINARY_DIR}/optional-calls${width}.exe)
                     add_custom_command(OUTPUT ${optional_calls_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
