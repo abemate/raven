@@ -19,10 +19,25 @@ static LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM 
 		SetWindowPos(tip,HWND_TOPMOST,outer.left+30,outer.top+40,20,14,SWP_NOACTIVATE);
 		ShowWindow(tip,SW_SHOWNA);
 		UpdateWindow(tip);
-		SetTimer(main_window,2,200,NULL);
+		SetTimer(main_window,2,600,NULL);
 		return 0;
 	}
-	if (message==WM_TIMER && wparam==2) { KillTimer(window,2); DestroyWindow(main_window); return 0; }
+	if (message==WM_TIMER && wparam==2) {
+		KillTimer(window,2);
+		/* The test's desktop has taken the keyboard away by now, as Alt-Tab does. A tip shown after that still belongs on this window: as a
+		   window of its own the compositor would leave it floating over whatever the user switched to. */
+		if (GetForegroundWindow()) { PostQuitMessage(3); return 0; }
+		RECT outer;
+		GetWindowRect(main_window,&outer);
+		HWND late=CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,L"raven.key.tip",L"",WS_POPUP | WS_DISABLED,
+			outer.left+70,outer.top+40,20,14,NULL,NULL,GetModuleHandleW(NULL),NULL);
+		if (!late) { PostQuitMessage(4); return 0; }
+		ShowWindow(late,SW_SHOWNA);
+		UpdateWindow(late);
+		SetTimer(main_window,3,200,NULL);
+		return 0;
+	}
+	if (message==WM_TIMER && wparam==3) { KillTimer(window,3); DestroyWindow(main_window); return 0; }
 	if (message==WM_DESTROY && window==main_window) { PostQuitMessage(0); return 0; }
 	return DefWindowProcW(window,message,wparam,lparam);
 }

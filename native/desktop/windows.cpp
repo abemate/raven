@@ -795,6 +795,7 @@ void NativeWindows::release_surface(uint64_t handle)
 	}
 	if (focus==handle) focus=0;
 	if (active==handle) active=0;
+	if (last_active==handle) last_active=0;
 	// A resize keeps the host window: the next frame has the new size.
 	if (!window->parent && window->bitmap && presentation.remove && !keep_host_window) remove_host_window(handle);
 	const auto bitmap=window->bitmap,dc=window->dc;
@@ -1466,9 +1467,11 @@ uint64_t NativeWindows::host_owner(const DesktopWindow &window) const
 	if (window.shown_on) return objects.window_root(window.shown_on);
 	// An unowned tool window popup without a caption (PXC's Alt key tips, one per ribbon button) is placed by the program in screen
 	// coordinates; a host window of its own would be placed by the compositor (KWin cascades them into a diagonal line). It shows on
-	// the active window instead, where the program put it.
-	if (!window.parent && active && (window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U && (window.ex_style & 0x80U)) {
-		const auto root=objects.window_root(active);
+	// the active window instead, where the program put it. One shown just after Alt-Tab took the keyboard away still goes on the window
+	// that was active, or it would be left floating over the program the user switched to.
+	const uint64_t shown_with=active ? active : last_active;
+	if (!window.parent && shown_with && (window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U && (window.ex_style & 0x80U)) {
+		const auto root=objects.window_root(shown_with);
 		const auto *record=root ? std::as_const(objects).window(root) : nullptr;
 		if (record && record!=&window && !record->parent) return root;
 	}
@@ -1900,7 +1903,7 @@ void NativeWindows::activate(uint64_t handle)
 				}
 				if (handle && !std::as_const(objects).window(handle)) handle=0;
 				active=handle;
-				if (handle) { notify(handle,0x86,1,previous); notify(handle,6,1,previous); }
+				if (handle) { last_active=handle; notify(handle,0x86,1,previous); notify(handle,6,1,previous); }
 				activating=false;
 			} catch (...) { activating=false; has_queued_activation=false; throw; }
 		}

@@ -284,6 +284,8 @@ private:
 	uint32_t mouse_buttons=0;
 	int32_t cursor_x=0,cursor_y=0;
 	uint64_t focus=0,active=0;
+	// The window that was active last, kept while the desktop has the keyboard elsewhere: see host_owner.
+	uint64_t last_active=0;
 	bool activating=false,has_queued_activation=false;
 	uint64_t queued_activation=0;
 	int focusing=0;
