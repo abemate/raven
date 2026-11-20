@@ -13,6 +13,8 @@ export RAVEN_PREFIX=${RAVEN_PREFIX:-$HOME/.local/share/raven/pdfx}
 PDFX_BUILD=unknown
 # Every run keeps a log, also when started from the menu, with crashes named and their stack shown.
 export RAVEN_BACKTRACE=${RAVEN_BACKTRACE:-1}
+# A Windows function Raven lacks fails that one action instead of ending the program, so unsaved work survives; the log still names it.
+export RAVEN_CONTINUE_UNIMPLEMENTED=${RAVEN_CONTINUE_UNIMPLEMENTED:-1}
 log_dir=${PDFX_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/pdfx}
 if [[ -z ${PDFX_DRY_RUN:-} ]] && mkdir -p "$log_dir" 2>/dev/null; then
     log="$log_dir/pdfx-$(date +%Y%m%d-%H%M%S).log"
