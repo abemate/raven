@@ -1,5 +1,6 @@
 #!/bin/bash
-# Build Raven from this checkout and install PDF-XChange Editor to run on it, for the current user.
+# Build Raven from this checkout and install PDF-XChange Editor to run on it, for the current user. Run again to update: Raven is
+# rebuilt and the pdfx command refreshed, while PDF-XChange Editor, once unpacked, and its settings and history are left alone.
 #   contrib/pdfx/setup-host.sh [path/to/PXCEditor11_Portable_x64.zip]
 # Run from a checkout of the pdfx-work branch (git switch --detach pdfx-work). Nothing outside this checkout's build-pdfx,
 # components and components-pdfx folders, ~/.local/share/raven/pdfx-program, ~/.local/bin and ~/.local/share/applications is written.
@@ -66,7 +67,7 @@ if [[ ! -f $program/PXCEditor.exe ]]; then
     chmod -R u+rwX "$program"
 fi
 
-step "Installing the pdfx command and the menu entry"
+if [[ -f $HOME/.local/bin/pdfx ]]; then step "Updating the pdfx command and the menu entry"; else step "Installing the pdfx command and the menu entry"; fi
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 commit=$(git -C "$repo" log -1 --format='%h %cs' 2>/dev/null || echo unknown)
 sed -e "s|^RAVEN=\${RAVEN:-.*}|RAVEN=\${RAVEN:-$build/native/raven}|" -e "s|^PDFX_BUILD=unknown|PDFX_BUILD='$commit'|" \
