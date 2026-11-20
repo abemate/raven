@@ -2824,6 +2824,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                         set_tests_properties(native_optional_calls_parallel_x64 PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/optional-calls-parallel-prefix;RAVEN_PARALLEL=1")
                     endif()
+                    set(gui_thread_info_client ${CMAKE_CURRENT_BINARY_DIR}/gui-thread-info${width}.exe)
+                    add_custom_command(OUTPUT ${gui_thread_info_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${gui_thread_info_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/gui_thread_info_client.c -luser32 -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/gui_thread_info_client.c VERBATIM)
+                    add_custom_target(gui_thread_info_fixture_x${width} ALL DEPENDS ${gui_thread_info_client})
+                    add_test(NAME native_gui_thread_info_x${width} COMMAND raven --run-process --execution=native ${gui_thread_info_client})
+                    set_tests_properties(native_gui_thread_info_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/gui-thread-info-prefix${width})
                     set(peer_client ${CMAKE_CURRENT_BINARY_DIR}/peer-process${width}.exe)
                     add_custom_command(OUTPUT ${peer_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
