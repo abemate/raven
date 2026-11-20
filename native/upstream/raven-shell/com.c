@@ -103,8 +103,12 @@ HRESULT raven_registered_class_object(REFCLSID clsid, DWORD context, REFIID iid,
 {
 	WCHAR key[MAX_PATH], library[MAX_PATH];
 	*out = NULL;
-	if (!(context & (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER)) && !((context & CLSCTX_LOCAL_SERVER) && service_class(clsid)))
-		return unregistered(clsid);
+	if (!(context & (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER)) && !((context & CLSCTX_LOCAL_SERVER) && service_class(clsid))) {
+		/* A class another process registers cannot be reached from here. "Not registered yet" would have the caller retry: PDF-XChange waits
+		 * 40 seconds for the scanner helper it just started, with its window frozen. Being told the server failed, it goes on at once. */
+		unregistered(clsid);
+		return context == CLSCTX_LOCAL_SERVER ? CO_E_SERVER_EXEC_FAILURE : REGDB_E_CLASSNOTREG;
+	}
 	class_key(clsid, L"\\InprocServer32", key);
 	/* The context in effect comes before the registry, as Windows looks there first. */
 	if (!((context & (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER)) && context_library(clsid, library, MAX_PATH)) && !class_value(key, library, MAX_PATH))
