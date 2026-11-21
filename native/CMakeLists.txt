@@ -4583,6 +4583,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(wave_out_fixture${width} ALL DEPENDS ${wave_out_client})
                     add_test(NAME native_wave_out_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${wave_out_client})
                     set_tests_properties(native_wave_out_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(crypt_provider_parameter_client ${CMAKE_CURRENT_BINARY_DIR}/crypt-provider-parameter${width}.exe)
+                    add_custom_command(OUTPUT ${crypt_provider_parameter_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${crypt_provider_parameter_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/crypt_provider_parameter_client.c -ladvapi32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crypt_provider_parameter_client.c VERBATIM)
+                    add_custom_target(crypt_provider_parameter_fixture_x${width} ALL DEPENDS ${crypt_provider_parameter_client})
+                    add_test(NAME native_crypt_provider_parameter_x${width} COMMAND raven --run-process --execution=native ${crypt_provider_parameter_client})
+                    set_tests_properties(native_crypt_provider_parameter_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/crypt-provider-parameter-prefix${width})
                     set(cert_store_duplicate_client ${CMAKE_CURRENT_BINARY_DIR}/cert-store-duplicate${width}.exe)
                     add_custom_command(OUTPUT ${cert_store_duplicate_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
