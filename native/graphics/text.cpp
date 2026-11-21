@@ -6,6 +6,7 @@
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkTypeface.h"
+#include "include/core/SkStream.h"
 #include "include/ports/SkFontMgr_empty.h"
 #include <algorithm>
 #include <cmath>
@@ -377,6 +378,21 @@ std::vector<uint8_t> TextRenderer::logical_table(std::span<const uint8_t,92> def
 	const size_t size=face ? face->getTableSize(tag) : 0;
 	std::vector<uint8_t> bytes(size);
 	if (size && face->getTableData(tag,0,size,bytes.data())!=size) bytes.clear();
+	return bytes;
+}
+
+std::vector<uint8_t> TextRenderer::logical_file(std::span<const uint8_t,92> definition,bool &collection)
+{
+	collection=false;
+	if (is_marlett(definition)) return {};
+	const auto font=state->logical(definition);
+	const auto *face=font.getTypeface();
+	int index=0;
+	const auto stream=face ? face->openStream(&index) : nullptr;
+	if (!stream || !stream->hasLength() || stream->getLength()>(256u<<20)) return {};
+	std::vector<uint8_t> bytes(stream->getLength());
+	if (stream->read(bytes.data(),bytes.size())!=bytes.size()) return {};
+	collection=bytes.size()>=4 && bytes[0]=='t' && bytes[1]=='t' && bytes[2]=='c' && bytes[3]=='f';
 	return bytes;
 }
 

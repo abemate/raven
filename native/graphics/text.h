@@ -41,6 +41,9 @@ public:
 	// One table of the face a logical font uses, as GetFontData hands it out (tag in the file's byte order, 'OS/2' is 0x4f532f32);
 	// empty when the face has no such table.
 	std::vector<uint8_t> logical_table(std::span<const uint8_t,92> definition,uint32_t tag);
+	// The whole font file of that face, as GetFontData hands it out for table 0, or for 'ttcf' when the file is a TrueType collection
+	// (collection is then set); empty when the face has no file to give.
+	std::vector<uint8_t> logical_file(std::span<const uint8_t,92> definition,bool &collection);
 	// The design units per em of that face, from its head table; 0 for the symbol face that has none.
 	uint32_t logical_units_per_em(std::span<const uint8_t,92> definition);
 	// Cumulative pixel advance after each UTF-16 unit; control characters advance by zero.

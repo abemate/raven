@@ -784,13 +784,21 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		});
 	});
 	// GetFontData(dc, table, offset, buffer, size): a table of the font file the selected font uses, its tag in file order (the bytes of
-	// "hhea" as they read); without a buffer the length from the offset. The whole file (table 0) is not handed out: GDI_ERROR, as for a
-	// table the font does not have.
+	// "hhea" as they read); without a buffer the length from the offset. Table 0 is the whole file, and 'ttcf' the whole file of a
+	// TrueType collection, as a program that embeds or renders the font itself reads it. Table 0 of a face inside a collection would be
+	// that face's own part of the file, which is not handed out: GDI_ERROR, as for a table the font does not have.
 	registry.add("GetFontData", 5, [=, this](ApiCall &call) {
 		guarded(call, 0xffffffffU, [&] {
 			auto &dc = require_dc(call, 0);
 			const uint32_t tag = call.u32(1);
-			const auto table = tag ? objects.text().logical_table(selected_font(dc).definition, __builtin_bswap32(tag)) : std::vector<uint8_t>{};
+			std::vector<uint8_t> table;
+			if (tag == 0 || tag == 0x66637474U) {
+				bool collection = false;
+				table = objects.text().logical_file(selected_font(dc).definition, collection);
+				if (collection != (tag != 0))
+					table.clear();
+			} else
+				table = objects.text().logical_table(selected_font(dc).definition, __builtin_bswap32(tag));
 			const uint32_t offset = call.u32(2);
 			if (table.empty() || offset > table.size()) {
 				call.fail(1, 0xffffffffU);

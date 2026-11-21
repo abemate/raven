@@ -4447,6 +4447,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(glyph_index_fixture${width} ALL DEPENDS ${glyph_index_client})
                     add_test(NAME native_glyph_index_x${width} COMMAND raven --run-process --execution=native ${glyph_index_client})
                     set_tests_properties(native_glyph_index_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(font_file_client ${CMAKE_CURRENT_BINARY_DIR}/font-file${width}.exe)
+                    add_custom_command(OUTPUT ${font_file_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${font_file_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/font_file_client.c -lgdi32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/font_file_client.c VERBATIM)
+                    add_custom_target(font_file_fixture_x${width} ALL DEPENDS ${font_file_client})
+                    add_test(NAME native_font_file_x${width} COMMAND raven --run-process --execution=native ${font_file_client})
+                    set_tests_properties(native_font_file_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/font-file-prefix${width})
                     set(dialog_font_client ${CMAKE_CURRENT_BINARY_DIR}/dialog-font${width}.exe)
                     add_custom_command(OUTPUT ${dialog_font_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
