@@ -102,7 +102,7 @@ struct WaylandPresentation::State {
 		// Where a popup or an attached window sits on its parent, and whether it took a grab.
 		int32_t popup_x=0,popup_y=0;
 		bool grabbed=false;
-		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false, mapped=false, alpha=false;
+		bool configured=false, closed=false, resized=false, close_posted=false, first_frame=false, maximized=false, mapped=false, alpha=false, iconic=false;
 		// What the compositor was last told of the surface's opaque area: all of it, none of it, or nothing yet.
 		std::optional<bool> opaque;
 		// Whether the compositor's last configure shows the window maximized, whether the state Raven asked for is still to come, and
@@ -425,6 +425,12 @@ struct WaylandPresentation::State {
 					if (std::getenv("RAVEN_TRACE_KEYS")) fprintf(stderr,"keyboard enter %p -> %llx\n",(void *)surface,(unsigned long long)state.keyboard_window);
 					// Focus sent to a surface just destroyed, as a popup menu made again or closed, was on its way before the compositor heard: nothing has focus.
 					if (!state.keyboard_window) { state.keyboard_event({0,0,0,0,DesktopEventKind::keyboard_focus}); return; }
+					// Wayland does not say when a minimized window comes back; the window getting the keyboard is the sign, and the program is
+					// told to restore it (WM_SYSCOMMAND SC_RESTORE), as it is on X11.
+					if (auto &shown=*state.surfaces.at(state.keyboard_window); shown.iconic) {
+						shown.iconic=false;
+						state.keyboard_event({state.keyboard_window,0x112,0xf120,0});
+					}
 					DesktopEvent event{state.keyboard_window,0,0,0,DesktopEventKind::keyboard_focus};
 					try {
 						event.held_keys.resize(keys->size/sizeof(uint32_t));
@@ -1070,6 +1076,15 @@ struct WaylandPresentation::State {
 		apply_owner(handle);
 	}
 
+	// A minimized window keeps its surface and its place on the taskbar; only the compositor hides it.
+	void minimize(uint64_t handle) {
+		const auto found=surfaces.find(handle);
+		if (found==surfaces.end() || !found->second->role) return;
+		found->second->iconic=true;
+		xdg_toplevel_set_minimized(found->second->role);
+		wl_display_flush(display);
+	}
+
 	void maximize(uint64_t handle,bool wanted) {
 		if (wanted) maximized.insert(handle); else maximized.erase(handle);
 		const auto found=surfaces.find(handle);
@@ -1252,6 +1267,7 @@ DesktopPresentation WaylandPresentation::callbacks()
 		state->overlay(handle,window,x,y,width,height,pixels,stride);
 	}};
 	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
+	result.minimize=[this](uint64_t handle) { state->minimize(handle); };
 	result.changed_within=[this](uint64_t handle,std::array<int32_t,4> area) { state->within[handle]=area; };
 	result.translucent=[this](uint64_t handle,bool alpha) {
 		if (alpha) state->translucent.insert(handle);

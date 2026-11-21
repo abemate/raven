@@ -35,6 +35,10 @@ struct Compositor {
 	uint32_t serial=0,pressed=0;
 	// Set by the test: a key is pressed and released; the next frame committed to a window is answered with a request to close it.
 	std::atomic<bool> type{false},stop{false},close_on_commit{false};
+	// A window minimized takes the keyboard away from it, as compositors do; set by the test, the keyboard goes back to it.
+	std::atomic<int> minimized{0};
+	std::atomic<bool> refocus{false};
+	wl_resource *minimized_surface=nullptr;
 
 	void focus(wl_resource *surface) {
 		if (!keyboard) return;
@@ -111,6 +115,13 @@ static int dispatch(const void *data,void *target,uint32_t,const wl_message *mes
 		auto &shell=compositor.surfaces[surface_of(resource)];
 		shell.grab=true;
 		shell.denied=!compositor.pressed || arguments[1].u!=compositor.pressed;
+	} else if (request=="xdg_toplevel.set_minimized") {
+		++compositor.minimized;
+		compositor.minimized_surface=surface_of(resource);
+		if (compositor.keyboard && compositor.focused==compositor.minimized_surface) {
+			wl_keyboard_send_leave(compositor.keyboard,++compositor.serial,compositor.minimized_surface);
+			compositor.focused=nullptr;
+		}
 	} else if (request=="xdg_popup.destroy") {
 		const auto &shell=compositor.surfaces[surface_of(resource)];
 		if (compositor.focused==surface_of(resource) && shell.parent) compositor.focus(shell.parent);
@@ -205,6 +216,18 @@ static void exercise(raven::DesktopPresentation &desktop,Compositor &compositor)
 			asked=asked || (event.window==1 && event.message==0x10);
 	check(asked,"the compositor's close did not reach the window");
 	desktop.present(1,"owner",64,48,frame);
+	// Minimized, the window stays with its surface while the compositor hides it. Wayland does not say when it comes back; given the
+	// keyboard again, as when it is picked from the taskbar, the program is told to restore it (WM_SYSCOMMAND SC_RESTORE).
+	check(bool(desktop.minimize),"the presentation cannot minimize a window");
+	desktop.minimize(1);
+	for (int attempt=0;attempt<50 && !compositor.minimized;++attempt) desktop.poll(std::chrono::milliseconds(10));
+	check(compositor.minimized==1,"the compositor was not asked to minimize the window");
+	compositor.refocus=true;
+	bool restored=false;
+	for (int attempt=0;attempt<50 && !restored;++attempt)
+		for (const auto &event : desktop.poll(std::chrono::milliseconds(10)))
+			restored=restored || (event.window==1 && event.message==0x112 && event.wparam==0xf120);
+	check(restored,"a minimized window given the keyboard back was not restored");
 }
 
 int main()
@@ -226,6 +249,7 @@ int main()
 		auto *loop=wl_display_get_event_loop(compositor.display);
 		while (!compositor.stop) {
 			if (compositor.type.exchange(false)) compositor.press();
+			if (compositor.refocus.exchange(false) && compositor.minimized_surface) compositor.focus(compositor.minimized_surface);
 			wl_display_flush_clients(compositor.display);
 			wl_event_loop_dispatch(loop,10);
 		}
