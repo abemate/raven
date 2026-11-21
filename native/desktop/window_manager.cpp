@@ -48,7 +48,11 @@ uint64_t NativeWindows::window_at(int32_t x, int32_t y)
 	auto roots = top_level_windows();
 	for (auto root = roots.rbegin(); root != roots.rend(); ++root) {
 		const auto *record = std::as_const(objects).window(*root);
-		if (record && record->visible && x >= record->outer.left && y >= record->outer.top && x < record->outer.right && y < record->outer.bottom)
+		// As on Windows, a disabled window is passed over, and so is a layered window transparent to the pointer (WS_EX_LAYERED with
+		// WS_EX_TRANSPARENT), as the picture following the pointer in a drag is: what lies under it is what a drop lands on.
+		if (!record || (record->style & 0x08000000U) || (record->ex_style & 0x80020U) == 0x80020U)
+			continue;
+		if (record->visible && x >= record->outer.left && y >= record->outer.top && x < record->outer.right && y < record->outer.bottom)
 			return pointer_child(*root, x, y);
 	}
 	return 0;

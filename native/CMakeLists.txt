@@ -4719,6 +4719,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(reopen_file_fixture${width} ALL DEPENDS ${reopen_file_client})
                     add_test(NAME native_reopen_file_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${reopen_file_client})
                     set_tests_properties(native_reopen_file_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(drag_drop_client ${CMAKE_CURRENT_BINARY_DIR}/drag-drop${width}.exe)
+                    add_custom_command(OUTPUT ${drag_drop_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${drag_drop_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/drag_drop_client.c -lole32 -luuid -luser32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/drag_drop_client.c VERBATIM)
+                    add_custom_target(drag_drop_fixture_x${width} ALL DEPENDS ${drag_drop_client})
+                    add_test(NAME native_drag_drop_x${width} COMMAND raven --run-process --execution=native ${drag_drop_client})
+                    set_tests_properties(native_drag_drop_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/drag-drop-prefix${width})
                     set(menu_insert_client ${CMAKE_CURRENT_BINARY_DIR}/menu-insert${width}.exe)
                     add_custom_command(OUTPUT ${menu_insert_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
