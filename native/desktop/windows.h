@@ -361,6 +361,7 @@ private:
 	std::array<KeyboardKey,256> key_pressed{};
 	std::optional<Message> key_translation;
 	void activate(uint64_t window);
+	void raise_active(uint64_t window);
 	uint64_t set_focus(uint64_t window);
 	void receive(const DesktopEvent &event);
 	// Input that arrives while a pointer event is being placed in the queue (the program runs during its hit test, cursor request and

@@ -1877,6 +1877,27 @@ void NativeWindows::notify(uint64_t handle, uint32_t message, uint64_t wparam, u
 	send(handle,message,wparam,lparam);
 }
 
+// The window that becomes active comes to the top of the stacking, as on Windows, and the windows it owns stay above it in their order;
+// topmost windows stay above everything. The compositor stacks the host windows itself, but WindowFromPoint answers from this order.
+void NativeWindows::raise_active(uint64_t handle)
+{
+	const auto *record=std::as_const(objects).window(handle);
+	if (!record || record->parent) return;
+	const auto owned_by=[this](uint64_t window,uint64_t owner) {
+		const auto *at=std::as_const(objects).window(window);
+		for (unsigned depth=0;at && at->owner && depth<64;++depth) {
+			const auto root=objects.window_root(at->owner);
+			if (root==owner) return true;
+			at=std::as_const(objects).window(root);
+		}
+		return false;
+	};
+	const auto roots=top_level_windows();
+	objects.restack(handle,true);
+	for (const auto root:roots) if (root!=handle && owned_by(root,handle)) objects.restack(root,true);
+	for (const auto root:roots) if (const auto *other=std::as_const(objects).window(root); other && (other->ex_style & 8U)) objects.restack(root,true);
+}
+
 void NativeWindows::activate(uint64_t handle)
 {
 	if (handle) handle=objects.window_root(handle);
@@ -1893,7 +1914,7 @@ void NativeWindows::activate(uint64_t handle)
 				}
 				if (handle && !std::as_const(objects).window(handle)) handle=0;
 				active=handle;
-				if (handle) { notify(handle,0x86,1,previous); notify(handle,6,1,previous); }
+				if (handle) { raise_active(handle); notify(handle,0x86,1,previous); notify(handle,6,1,previous); }
 				activating=false;
 			} catch (...) { activating=false; has_queued_activation=false; throw; }
 		}

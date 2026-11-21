@@ -4455,6 +4455,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(dialog_font_fixture${width} ALL DEPENDS ${dialog_font_client})
                     add_test(NAME native_dialog_font_x${width} COMMAND raven --run-process --execution=native ${dialog_font_client})
                     set_tests_properties(native_dialog_font_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(active_stacking_client ${CMAKE_CURRENT_BINARY_DIR}/active-stacking${width}.exe)
+                    add_custom_command(OUTPUT ${active_stacking_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${active_stacking_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/active_stacking_client.c -luser32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/active_stacking_client.c VERBATIM)
+                    add_custom_target(active_stacking_fixture_x${width} ALL DEPENDS ${active_stacking_client})
+                    add_test(NAME native_active_stacking_x${width} COMMAND raven --run-process --execution=native ${active_stacking_client})
+                    set_tests_properties(native_active_stacking_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/active-stacking-prefix${width})
                     set(cross_window_client ${CMAKE_CURRENT_BINARY_DIR}/cross-window${width}.exe)
                     add_custom_command(OUTPUT ${cross_window_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
