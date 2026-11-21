@@ -1765,13 +1765,17 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	registry.add("CreateDirectoryW", 2, [&, resolve, resolve_change, missing, file_of](ApiCall &call) {
-		auto resolved = resolve_change(call, call.wide(call[0]));
-		if (!resolved)
-			return;
-		if (resolved->exists) {
-			call.set_last_error(183);
+		const auto name = call.wide(call[0]);
+		// A folder that is there already is ERROR_ALREADY_EXISTS whether or not the program may change it, as on Windows: a program
+		// that makes each folder of a path in turn goes on past the ones it may only read, and nothing was refused.
+		if (const auto seen = resolve(call, name); !seen || seen->exists) {
+			if (seen)
+				call.set_last_error(183);
 			return;
 		}
+		auto resolved = resolve_change(call, name);
+		if (!resolved)
+			return;
 		if (resolved->parent_exists && !paths.prepare_change(*resolved, false)) {
 			call.fail(5);
 			return;

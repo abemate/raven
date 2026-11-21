@@ -4711,6 +4711,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(split_lock_fixture${width} ALL DEPENDS ${split_lock_client})
                     add_test(NAME native_split_lock_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${split_lock_client})
                     set_tests_properties(native_split_lock_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(existing_directory_client ${CMAKE_CURRENT_BINARY_DIR}/existing-directory${width}.exe)
+                    add_custom_command(OUTPUT ${existing_directory_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${existing_directory_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/existing_directory_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/existing_directory_client.c VERBATIM)
+                    add_custom_target(existing_directory_fixture_x${width} ALL DEPENDS ${existing_directory_client})
+                    add_test(NAME native_existing_directory_x${width} COMMAND raven --run-process --execution=native ${existing_directory_client})
+                    set_tests_properties(native_existing_directory_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/existing-directory-prefix${width})
                     set(reopen_file_client ${CMAKE_CURRENT_BINARY_DIR}/reopen-file${width}.exe)
                     add_custom_command(OUTPUT ${reopen_file_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
