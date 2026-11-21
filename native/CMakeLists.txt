@@ -4527,6 +4527,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(frame_only_fixture${width} ALL DEPENDS ${frame_only_client})
                     add_test(NAME native_frame_only_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${frame_only_client})
                     set_tests_properties(native_frame_only_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(scroll_dc_client ${CMAKE_CURRENT_BINARY_DIR}/scroll-dc${width}.exe)
+                    add_custom_command(OUTPUT ${scroll_dc_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${scroll_dc_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/scroll_dc_client.c -lgdi32 -luser32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/scroll_dc_client.c VERBATIM)
+                    add_custom_target(scroll_dc_fixture_x${width} ALL DEPENDS ${scroll_dc_client})
+                    add_test(NAME native_scroll_dc_x${width} COMMAND raven --run-process --execution=native ${scroll_dc_client})
+                    set_tests_properties(native_scroll_dc_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/scroll-dc-prefix${width})
                     set(opaque_rect_client ${CMAKE_CURRENT_BINARY_DIR}/opaque-rect${width}.exe)
                     add_custom_command(OUTPUT ${opaque_rect_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
