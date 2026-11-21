@@ -1122,7 +1122,10 @@ struct WaylandPresentation::State {
 			xdg_surface_add_listener(window->shell,&surface_listener,window.get());
 			xdg_toplevel_add_listener(window->role,&role_listener,window.get());
 			xdg_toplevel_set_title(window->role,std::string(title).c_str());
-			xdg_toplevel_set_app_id(window->role,"raven.native");
+			// The desktop finds a window's icon and groups it on the taskbar by its app ID, through the menu entry of that name. A launcher
+			// names its own program with RAVEN_APP_ID; without one every program is raven.native.
+			const char *app_id=std::getenv("RAVEN_APP_ID");
+			xdg_toplevel_set_app_id(window->role,app_id && *app_id ? app_id : "raven.native");
 			// A floating window starts at its requested size; a maximized one follows the compositor's work area.
 			if (window->maximized) xdg_toplevel_set_maximized(window->role);
 			else {

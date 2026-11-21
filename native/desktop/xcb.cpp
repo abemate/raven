@@ -442,8 +442,12 @@ struct XcbPresentation::State {
 		xcb_create_window(connection,XCB_COPY_FROM_PARENT,id,screen->root,int16_t(x),int16_t(y),uint16_t(width),uint16_t(height),0,
 			XCB_WINDOW_CLASS_INPUT_OUTPUT,XCB_COPY_FROM_PARENT,
 			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK|XCB_CW_CURSOR,values);
-		static constexpr char name[]="raven.native\0raven.native";
-		property(id,atoms[wm_class],atoms[string_type],8,sizeof name,name);
+		// WM_CLASS holds the instance and class names, each ended by a zero. A launcher names its own program with RAVEN_APP_ID, as on
+		// Wayland; without one every program is raven.native.
+		const char *app_id=std::getenv("RAVEN_APP_ID");
+		const std::string app=app_id && *app_id ? app_id : "raven.native";
+		const std::string name=app+'\0'+app+'\0';
+		property(id,atoms[wm_class],atoms[string_type],8,uint32_t(name.size()),name.data());
 		if (popup) property(id,atoms[window_type],atoms[atom_type],32,1,&atoms[window_type_popup]);
 		return id;
 	}

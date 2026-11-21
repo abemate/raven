@@ -32,6 +32,8 @@ struct Compositor {
 	// and whether the newest opened on a window.
 	std::atomic<int> subsurfaces{0},subsurfaces_on_windows{0},placed_x{0},placed_y{0},popups{0};
 	std::atomic<bool> popup_on_window{false};
+	// Whether every window was given the app ID the launcher named.
+	std::atomic<int> app_ids{0},app_ids_named{0};
 	uint32_t serial=0,pressed=0;
 	// Set by the test: a key is pressed and released; the next frame committed to a window is answered with a request to close it.
 	std::atomic<bool> type{false},stop{false},close_on_commit{false};
@@ -98,6 +100,9 @@ static int dispatch(const void *data,void *target,uint32_t,const wl_message *mes
 			compositor.popup_on_window=parent!=compositor.surfaces.end() && parent->second.role && !parent->second.popup;
 		}
 		if (shell.popup) compositor.popup_adjustment=shell.adjustment=compositor.adjustments[object(2)];
+	} else if (request=="xdg_toplevel.set_app_id") {
+		++compositor.app_ids;
+		if (std::string(arguments[0].s)=="raven.test") ++compositor.app_ids_named;
 	} else if (request=="wl_subcompositor.get_subsurface") {
 		const auto parent=compositor.surfaces.find(object(2));
 		++compositor.subsurfaces;
@@ -153,6 +158,9 @@ static void exercise(raven::DesktopPresentation &desktop,Compositor &compositor)
 {
 	const std::vector<uint8_t> frame(64*48*4,0xff),menu(16*16*4,0x80);
 	desktop.present(1,"owner",64,48,frame);
+	// The window carries the app ID its launcher gave, which the desktop finds its menu entry and icon by.
+	for (int attempt=0;attempt<50 && !compositor.app_ids;++attempt) desktop.poll(std::chrono::milliseconds(10));
+	check(compositor.app_ids==1 && compositor.app_ids_named==1,"the window does not carry the app ID its launcher named");
 	// Before any press the compositor refuses the grab; the popup it dismissed is forgotten, so that the same window can show it later.
 	bool refused=false;
 	try { desktop.popup(2,1,4,4,16,16,menu); } catch (const std::runtime_error &) { refused=true; }
@@ -222,6 +230,7 @@ int main()
 	}
 	// The presentation connects through the inherited socket instead of a compositor named by WAYLAND_DISPLAY.
 	setenv("WAYLAND_SOCKET",std::to_string(sockets[1]).c_str(),1);
+	setenv("RAVEN_APP_ID","raven.test",1);
 	std::thread server([&] {
 		auto *loop=wl_display_get_event_loop(compositor.display);
 		while (!compositor.stop) {
