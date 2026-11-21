@@ -480,9 +480,33 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const auto daylight_name = from_utf8(first.offset_minutes > second.offset_minutes ? first.name : second.name).substr(0, 31);
 		std::memcpy(bytes.data() + 4, standard_name.data(), standard_name.size() * 2);
 		std::memcpy(bytes.data() + 88, daylight_name.data(), daylight_name.size() * 2);
-		if (standard != daylight)
-			for (const auto &change : changes)
+		if (standard != daylight) {
+			bool starts = false, ends = false;
+			for (const auto &change : changes) {
 				put_rule(change.after.offset_minutes == daylight ? 152 : 68, change);
+				(change.after.offset_minutes == daylight ? starts : ends) = true;
+			}
+			// A zone that keeps daylight time from some day on, as America/Vancouver does from 2026, has a year whose daylight time never
+			// ends; one that leaves it has a year that starts in it. Windows describes such a year with a change at its last instant
+			// (the last weekday of December at 23:59:59.999) or at its first (the first weekday of January at midnight).
+			const auto weekday = [&](int month, int day) {
+				tm date{};
+				date.tm_year = year - 1900;
+				date.tm_mon = month - 1;
+				date.tm_mday = day;
+				const time_t at = ::timegm(&date);
+				::gmtime_r(&at, &date);
+				return uint16_t(date.tm_wday);
+			};
+			if (starts && !ends) {
+				const uint16_t fields[8] = {0, 12, weekday(12, 31), 5, 23, 59, 59, 999};
+				std::memcpy(bytes.data() + 68, fields, sizeof fields);
+			}
+			if (ends && !starts) {
+				const uint16_t fields[8] = {0, 1, weekday(1, 1), 1, 0, 0, 0, 0};
+				std::memcpy(bytes.data() + 152, fields, sizeof fields);
+			}
+		}
 		const int32_t daylight_bias = standard - daylight;
 		std::memcpy(bytes.data() + 168, &daylight_bias, 4);
 		if (dynamic) {
@@ -501,7 +525,11 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> bytes;
 		const bool has_daylight = zone_for_year(current_year(), dynamic, bytes);
 		call.write(call[0], bytes);
-		call.ret(!has_daylight ? 0 : zone_at(::time(nullptr)).daylight ? 2 : 1);
+		// Daylight time is whatever the clock is ahead of the year's standard time by, whatever the zone calls it: America/Vancouver's
+		// lasting daylight time is named MST, a standard time to the host.
+		int32_t bias;
+		std::memcpy(&bias, bytes.data(), 4);
+		call.ret(!has_daylight ? 0 : zone_at(::time(nullptr)).offset_minutes != -bias ? 2 : 1);
 	};
 	// A year's rules for the zone named, or for the current zone when none is. The host has one zone: a dynamic zone with another key
 	// name is not found.

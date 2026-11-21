@@ -4535,6 +4535,19 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(opaque_rect_fixture${width} ALL DEPENDS ${opaque_rect_client})
                     add_test(NAME native_opaque_rect_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${opaque_rect_client})
                     set_tests_properties(native_opaque_rect_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(lasting_daylight_client ${CMAKE_CURRENT_BINARY_DIR}/lasting-daylight${width}.exe)
+                    add_custom_command(OUTPUT ${lasting_daylight_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${lasting_daylight_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/lasting_daylight_client.c -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/lasting_daylight_client.c VERBATIM)
+                    add_custom_target(lasting_daylight_fixture_x${width} ALL DEPENDS ${lasting_daylight_client})
+                    # The zone is read from the test's prefix, which the confined runtime may read.
+                    configure_file(${PROJECT_SOURCE_DIR}/testdata/timezone/lasting-daylight.tzif
+                        ${CMAKE_CURRENT_BINARY_DIR}/lasting-daylight-prefix${width}/lasting-daylight.tzif COPYONLY)
+                    add_test(NAME native_lasting_daylight_x${width} COMMAND raven --run-process --execution=native ${lasting_daylight_client})
+                    set_tests_properties(native_lasting_daylight_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/lasting-daylight-prefix${width};TZ=:${CMAKE_CURRENT_BINARY_DIR}/lasting-daylight-prefix${width}/lasting-daylight.tzif")
                     set(help_quit_client ${CMAKE_CURRENT_BINARY_DIR}/help-quit${width}.exe)
                     add_custom_command(OUTPUT ${help_quit_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp

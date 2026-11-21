@@ -1,0 +1,6 @@
+# A zone that keeps daylight time from 2026 on, as America/Vancouver does: Pacific standard time, daylight time from the second Sunday
+# of March 2026, and from 1 November the same offset as a standard time named MST. Compiled with:
+#   zic -d . lasting-daylight.zone && mv Test/LastingDaylight lasting-daylight.tzif
+Zone Test/LastingDaylight -8:00 - PST 2026 Mar 8 2:00
+                          -8:00 1:00 PDT 2026 Nov 1 2:00
+                          -7:00 - MST
