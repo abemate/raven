@@ -454,7 +454,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("FindWindowExW", 4, [this](ApiCall &call) {
 		const auto name = call[2] && call[2] > 0xffff ? call.wide(call[2], 256) : std::u16string();
 		const auto title = call[3] ? call.wide(call[3], 4096) : std::u16string();
-		const auto siblings = objects.child_windows(call[0]);
+		const auto siblings = call[0] && call[0] != desktop ? objects.child_windows(call[0]) : top_level_windows();
 		bool started = call[1] == 0;
 		for (auto candidate = siblings.rbegin(); candidate != siblings.rend(); ++candidate) {
 			if (!started) {
@@ -497,16 +497,20 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			call.fail(1400);
 			return;
 		}
-		const auto siblings = objects.child_windows(window->parent);
+		// The desktop window is the parent of the top-level windows, which keep no parent of their own. PXC finds the toolbar under the
+		// pointer while a command is dragged from Customize Toolbars by walking them from GetWindow(GetDesktopWindow(), GW_CHILD) on;
+		// with none found, every place showed the no-entry cursor and took no drop.
+		const auto children_of = [this](uint64_t parent) { return parent == desktop ? top_level_windows() : objects.child_windows(parent); };
+		const auto siblings = window->parent ? objects.child_windows(window->parent) : top_level_windows();
 		const auto position = std::find(siblings.begin(), siblings.end(), call[0]);
 		switch (call.u32(1)) {
 		case 0: call.ret(siblings.empty() ? 0 : siblings.back()); break;
 		case 1: call.ret(siblings.empty() ? 0 : siblings.front()); break;
-		case 2: call.ret(position == siblings.begin() ? 0 : *(position - 1)); break;
+		case 2: call.ret(position == siblings.begin() || position == siblings.end() ? 0 : *(position - 1)); break;
 		case 3: call.ret(position == siblings.end() || position + 1 == siblings.end() ? 0 : *(position + 1)); break;
 		case 4: call.ret(window->owner); break;
 		case 5: {
-			const auto children = objects.child_windows(call[0]);
+			const auto children = children_of(call[0]);
 			call.ret(children.empty() ? 0 : children.back());
 			break;
 		}

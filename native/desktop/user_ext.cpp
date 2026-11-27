@@ -327,8 +327,7 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 		call.ret(!nothing);
 	});
 	registry.add("GetTopWindow", 1, [this](ApiCall &call) {
-		const auto parent = call[0] ? call[0] : desktop_window();
-		const auto children = objects.child_windows(call[0] ? parent : 0);
+		const auto children = call[0] && call[0] != desktop ? objects.child_windows(call[0]) : top_level_windows();
 		call.ret(children.empty() ? 0 : children.back());
 	});
 
