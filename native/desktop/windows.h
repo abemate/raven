@@ -330,6 +330,7 @@ private:
 	std::array<KeyboardKey,256> key_pressed{};
 	std::optional<Message> key_translation;
 	void activate(uint64_t window);
+	void raise_active(uint64_t window);
 	uint64_t set_focus(uint64_t window);
 	void activate_other(uint64_t handle);
 	void receive(const DesktopEvent &event);
