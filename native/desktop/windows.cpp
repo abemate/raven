@@ -1124,8 +1124,13 @@ void NativeWindows::serve_sent()
 		if (found==sent.end()) return;
 		const auto item=*found;
 		item->taken=true;
+		// A focus change noted from another thread is out of date once the focus has moved on: on Windows the window would have had
+		// WM_SETFOCUS before the move, never after it. When PXC comes to the front, the compositor's keyboard puts the focus on the frame
+		// window, and the frame's WM_ACTIVATE moves it on to the page view; the frame's WM_SETFOCUS, still waiting, then took it back
+		// to the frame, so Escape and typing went to the frame instead of the tool or form field in use.
+		const bool stale=item->notice && ((item->message==7 && focus!=item->window) || (item->message==8 && focus==item->window));
 		try {
-			item->result=objects.window(item->window) ? send(item->window,item->message,item->wparam,item->lparam) : 0;
+			item->result=objects.window(item->window) && !stale ? send(item->window,item->message,item->wparam,item->lparam) : 0;
 		} catch (...) {
 			item->done=true;
 			std::erase(sent,item);
@@ -1327,7 +1332,12 @@ void NativeWindows::receive(const DesktopEvent &event)
 		focus_leaving=false;
 		key_down=initial; key_translation.reset();
 		if (!event.window) { set_focus(0); activate(0); }
-		else if (!focus || objects.window_root(focus)!=event.window) set_focus(event.window);
+		else if (!focus || objects.window_root(focus)!=event.window) {
+			// The window is activated first and keeps the focus its WM_ACTIVATE gives back, as on Windows: PXC returns it to the page or
+			// the form field being typed in, and the frame window takes it only when nothing inside the window did.
+			activate(event.window);
+			if (!focus || objects.window_root(focus)!=event.window) set_focus(event.window);
+		}
 		deliver_moving_keys();
 		return;
 	}
@@ -1963,7 +1973,9 @@ void NativeWindows::notify(uint64_t handle, uint32_t message, uint64_t wparam, u
 	const auto *window=std::as_const(objects).window(handle);
 	if (!window) return;
 	if (const auto me=environment.thread_id(); window->thread && me && window->thread!=me && block_hook) {
-		sent.push_back(std::make_shared<SentMessage>(SentMessage{handle,message,wparam,lparam,0,window->thread}));
+		auto item=std::make_shared<SentMessage>(SentMessage{handle,message,wparam,lparam,0,window->thread});
+		item->notice=true;
+		sent.push_back(item);
 		queue_changed(window->thread,0x40);
 		return;
 	}

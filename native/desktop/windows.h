@@ -179,7 +179,8 @@ private:
 	uint32_t owner(uint64_t window) const;
 	bool queued_for(uint32_t thread) const;
 	// A message sent to a window of another thread waits here until that thread retrieves messages; the sender waits for the result.
-	struct SentMessage { uint64_t window; uint32_t message; uint64_t wparam, lparam, result=0; uint32_t thread; bool taken=false, done=false; };
+	// A notice is a message posted by notify(): nobody waits for its answer.
+	struct SentMessage { uint64_t window; uint32_t message; uint64_t wparam, lparam, result=0; uint32_t thread; bool taken=false, done=false, notice=false; };
 	std::deque<std::shared_ptr<SentMessage>> sent;
 	// Runs the messages other threads sent to windows of the calling thread.
 	void serve_sent();
