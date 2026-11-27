@@ -220,6 +220,26 @@ void NativeWindows::paint_nonclient(uint64_t handle)
 		return;
 	const int32_t width = window->outer.right - window->outer.left, height = window->outer.bottom - window->outer.top;
 	const bool is_active = active == handle;
+	// A program that draws its own caption over the frame (PDF-XChange) leaves Raven only the ring around it. When the edges of its
+	// window are dark (a dark theme), the ring takes Windows' dark frame colours so it does not stand out as a light band beside it.
+	bool dark_edges = false;
+	{
+		const int32_t left = std::max(window->x - window->outer.left, 0), top = std::max(window->y - window->outer.top, 0);
+		const int32_t right = std::min(left + window->width, int32_t(bitmap->width)), bottom = std::min(top + window->height, int32_t(bitmap->height));
+		if (top < layout.border + layout.caption_height + layout.menu_height && right - left > 2 && bottom - top > 2) {
+			const auto *pixels = bitmap->pixels().data();
+			uint64_t total = 0, count = 0;
+			for (int32_t step = 1; step < 8; ++step) {
+				const int32_t y = top + (bottom - top) * step / 8;
+				for (const int32_t x : {left, right - 1}) {
+					const auto *pixel = pixels + (size_t(y) * bitmap->width + x) * 4;
+					total += (uint64_t(pixel[2]) * 299 + uint64_t(pixel[1]) * 587 + uint64_t(pixel[0]) * 114) / 1000;
+					++count;
+				}
+			}
+			dark_edges = count && total / count < 96;
+		}
+	}
 	// The frame is drawn again only when something it shows changed; guest drawing stays inside the client area.
 	{
 		std::u16string key;
@@ -228,7 +248,7 @@ void NativeWindows::paint_nonclient(uint64_t handle)
 		add(uint64_t(window->style) << 32 | window->ex_style); add(is_active); add(window->menu);
 		add(open_menu_item && open_menu_window == handle ? *open_menu_item + 1 : 0);
 		add(hovered_frame_window == handle ? hovered_frame_hit : 0);
-		add(themed());
+		add(themed() | uint64_t(dark_edges) << 1);
 		add(uint64_t(uint32_t(window->x - window->outer.left)) << 32 | uint32_t(window->y - window->outer.top));
 		key += window->title;
 		key += u'\0';
@@ -265,7 +285,12 @@ void NativeWindows::paint_nonclient(uint64_t handle)
 			std::memcpy(pixels + (size_t(y) * bitmap->width + client_left) * 4, kept.data() + size_t(y - client_top) * row_bytes, row_bytes);
 	};
 	if (themed()) {
-		paint_modern_frame(handle, *window, layout, canvas, is_active, width, height);
+		if (dark_edges && !window->dark_frame) {
+			auto shown = *window;
+			shown.dark_frame = true;
+			paint_modern_frame(handle, shown, layout, canvas, is_active, width, height);
+		} else
+			paint_modern_frame(handle, *window, layout, canvas, is_active, width, height);
 		restore();
 		return;
 	}
