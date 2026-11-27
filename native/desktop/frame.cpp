@@ -12,6 +12,20 @@ namespace raven {
 
 using namespace paint;
 
+// Windows places a maximized window with its sizing border just past the screen edges, so the client area and the caption a program
+// draws itself reach the edges. Raven's maximized window is the size of the host window, so it goes without that border: PDF-XChange
+// keeps the left, right and bottom borders, which showed as grey bars beside its dark window, and the screen's top-right corner was
+// Raven's close button there rather than PXC's own, which did not light up under the pointer.
+int32_t NativeWindows::hidden_border(const DesktopWindow &window) const
+{
+	if (window.parent || !(window.style & 0x01000000U) || !(window.style & 0x40000U))
+		return 0;
+	// The client edges (WS_EX_CLIENTEDGE, WS_EX_STATICEDGE) stay: Windows keeps them inside the screen.
+	const auto adjusted = adjust_window_rect(objects.nonclient_metrics(), {0, 0, 0, 0}, window.style & ~0x10000000U,
+		false, window.ex_style & ~0x20200U);
+	return std::max(-adjusted.left, 0);
+}
+
 NativeWindows::FrameLayout NativeWindows::frame_layout(const DesktopWindow &window) const
 {
 	const auto &metrics = objects.nonclient_metrics();
@@ -20,7 +34,7 @@ NativeWindows::FrameLayout NativeWindows::frame_layout(const DesktopWindow &wind
 	const int32_t width = window.outer.right - window.outer.left, height = window.outer.bottom - window.outer.top;
 	// AdjustWindowRect already encodes ReactOS' border and caption rules; its deltas are the frame thickness.
 	const auto adjusted = adjust_window_rect(metrics, {0, 0, 0, 0}, style, false, window.ex_style);
-	layout.border = -adjusted.left;
+	layout.border = std::max(-adjusted.left - hidden_border(window), 0);
 	layout.caption_height = (style & 0xc00000U) == 0xc00000U ? metrics.caption : 0;
 	layout.menu_height = window.menu ? metrics.menu : 0;
 	layout.edge = (style & 0x40000U) || (style & 0xc00000U) == 0x400000U || (style & 0xc00000U) == 0xc00000U;

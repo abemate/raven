@@ -2265,7 +2265,8 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		auto rect=process.read_memory(args[3],16);
 		// The client area is the window rectangle minus what AdjustWindowRectEx adds for this style.
 		const auto frame=adjust_window_rect(objects.nonclient_metrics(),{0,0,0,0},window->style & ~0x10000000U,window->menu!=0,window->ex_style);
-		const int32_t edges[4]={frame.left,frame.top,frame.right,frame.bottom};
+		const int32_t hidden=hidden_border(*window);
+		const int32_t edges[4]={frame.left+hidden,frame.top+hidden,frame.right-hidden,frame.bottom-hidden};
 		for (size_t index=0;index<4;++index)
 			put(rect,index*4,uint32_t(int32_t(read(rect,index*4,4))-edges[index]),4);
 		// Scroll bars sit between the edge and the client area on the right and bottom.

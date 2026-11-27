@@ -27,6 +27,11 @@ int raven_entry(void)
 	if (hit(window,middle_x,r.top)!=HTCAPTION) return 12;
 	const LRESULT left=hit(window,r.left,middle_y),right=hit(window,r.right-1,middle_y),bottom=hit(window,middle_x,r.bottom-1);
 	if ((left>=HTLEFT && left<=HTBOTTOMRIGHT) || (right>=HTLEFT && right<=HTBOTTOMRIGHT) || (bottom>=HTLEFT && bottom<=HTBOTTOMRIGHT)) return 13;
+	// The sizing border that Windows keeps past the screen edges is left out: the client area reaches the sides and the bottom, so a
+	// program that draws its own caption (PDF-XChange) shows no border beside it and gets the pointer at the screen's edges.
+	RECT client;
+	if (!GetClientRect(window,&client) || client.right!=r.right-r.left || client.bottom!=r.bottom-r.top-GetSystemMetrics(SM_CYCAPTION)) return 16;
+	if (left!=HTCLIENT || right!=HTCLIENT || bottom!=HTCLIENT) return 17;
 	ShowWindow(window,SW_RESTORE);
 	if (IsZoomed(window) || !GetWindowRect(window,&r)) return 5;
 	if (hit(window,r.right-1,(r.top+r.bottom)/2)!=HTRIGHT || hit(window,r.left,(r.top+r.bottom)/2)!=HTLEFT) return 14;
