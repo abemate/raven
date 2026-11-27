@@ -50,11 +50,16 @@ int main(int argc,char **argv)
 				typed=true; raven::DesktopEvent layout{0,0}; layout.kind=raven::DesktopEventKind::keymap; layout.keymap=keymap;
 				events.push_back(std::move(layout));
 				raven::DesktopEvent focused{window,0,0,0,raven::DesktopEventKind::keyboard_focus};
-				if (mode!="normal" && mode!="remap") focused.held_keys={34,125};
+				if (mode!="normal" && mode!="remap" && mode!="altarrival") focused.held_keys={34,125};
 				if (mode=="duplicate") focused.held_keys={34,34};
 				if (mode=="outofrange") focused.held_keys={256};
 				if (mode=="nofocus") focused.window=0;
 				events.push_back(std::move(focused));
+				// Alt-Tab back: the compositor reports Alt held with the keyboard's arrival, then its release as a change of modifiers.
+				if (mode=="altarrival") {
+					events.push_back({0,8,0,0,raven::DesktopEventKind::modifiers});
+					events.push_back({0,0,0,0,raven::DesktopEventKind::modifiers});
+				}
 				if (mode=="held") {
 					events.push_back({window,34,0,0,raven::DesktopEventKind::key});
 					events.push_back({window,125,1,0,raven::DesktopEventKind::key});
@@ -69,7 +74,7 @@ int main(int argc,char **argv)
 			} else if (frames==3 && !closed) { closed=true; events.push_back({window,0x10}); }
 			return events;
 		};
-		if (mode!="normal" && mode!="held" && mode!="remap") {
+		if (mode!="normal" && mode!="held" && mode!="remap" && mode!="altarrival") {
 			bool rejected=false;
 			try { raven::run_native_process(modules,entry,argv[1],std::chrono::seconds(5),{},{},presentation); }
 			catch (const std::runtime_error &error) {

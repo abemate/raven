@@ -310,6 +310,8 @@ private:
 	void drop_spare_surface(uint64_t handle);
 	// The compositor took the keyboard from the program's windows; applied once no window of the program receives it right after.
 	bool focus_leaving=false;
+	// The keyboard just arrived: the modifier state the compositor reports next holds keys pressed elsewhere, which the program never saw go down.
+	bool modifiers_on_arrival=false;
 	std::chrono::steady_clock::time_point focus_left{};
 	void settle_focus_leave(bool now);
 	// The windows whose surface was handed to a graphics driver, by the root they were last placed in, so that a frame moving or

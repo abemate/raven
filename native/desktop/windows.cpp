@@ -1246,6 +1246,20 @@ void NativeWindows::receive(const DesktopEvent &event)
 	if (event.kind==DesktopEventKind::keymap) { keyboard_map.load(event.keymap); key_translation.reset(); return; }
 	if (event.kind==DesktopEventKind::modifiers) {
 		keyboard_map.modifiers(event.message,uint32_t(event.wparam),uint32_t(event.lparam),uint32_t(event.lparam>>32));
+		// Modifiers already held when the keyboard arrives were pressed in another window: Alt still held from the Alt-Tab that brought the
+		// program back. They count as down without a press, as on Windows, where the program never sees Alt go down then. A press made up
+		// here, followed by the release, was a lone Alt tap to PDF-XChange, which put its ribbon in keyboard mode instead of the text being typed.
+		const bool arrival=std::exchange(modifiers_on_arrival,false);
+		if (arrival) {
+			static constexpr uint32_t scans[3]{0x2a,0x1d,0x38};
+			for (uint32_t index=0;index<3;++index) {
+				const uint32_t code=0x10+index;
+				const bool active=keyboard_map.modifier_active(code);
+				vk_async[code]=active ? (vk_async[code] | 0x80) : (vk_async[code] & 0x7f);
+				set_key(vk_async,sided_key(code,scans[index],false),active);
+			}
+			return;
+		}
 		// A virtual keyboard reports modifiers without key events; the guest still sees them go down and up.
 		if (focus && std::as_const(objects).window(focus) && messages.size()<9990) {
 			static constexpr uint32_t scans[3]{0x2a,0x1d,0x38};
@@ -1265,6 +1279,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 	if (event.kind==DesktopEventKind::keyboard_focus) {
 		if (std::getenv("RAVEN_TRACE_KEYS") || input_trace_on()) fprintf(stderr,"keyboard focus event %llx, focus %llx root %llx\n",(unsigned long long)event.window,
 			(unsigned long long)focus,(unsigned long long)(focus ? objects.window_root(focus) : 0));
+		modifiers_on_arrival=event.window!=0;
 		std::array<bool,256> initial{};
 		for (const auto code : event.held_keys) {
 			if (code>=initial.size() || initial[code]) throw std::runtime_error("invalid initial keyboard key state");

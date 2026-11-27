@@ -40,6 +40,9 @@ static LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM 
 	if (message==WM_ERASEBKGND) { ++erased; return repaint==3; }
 #endif
 #ifdef RAVEN_KEYBOARD_LOOP
+	// Alt held when the keyboard arrives was pressed in another window (the Alt-Tab back): it is never pressed here, only released.
+	if ((message==WM_KEYDOWN || message==WM_SYSKEYDOWN) && wparam==VK_MENU) { failed=31; return 0; }
+	if ((message==WM_KEYUP || message==WM_SYSKEYUP) && wparam==VK_MENU) return 0;
 	if (message==WM_KEYDOWN || message==WM_KEYUP) {
 #ifdef RAVEN_FOCUS_LOOP
 		if (wparam==VK_LWIN) {
